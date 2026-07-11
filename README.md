@@ -137,7 +137,7 @@ DHT_RELAY_TOR_TEST_TOR=1 npm test
 ```
 
 Set `TOR_BIN=/path/to/tor` if `tor` is not on `PATH`. Tor bootstrap requires
-outbound network access to the public Tor network and may take up to three
+outbound network access to the public Tor network and may take up to ten
 minutes. The test uses fresh temporary data and hidden-service directories and
 removes them during teardown.
 

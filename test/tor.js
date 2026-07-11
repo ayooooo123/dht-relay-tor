@@ -11,12 +11,12 @@ const RelayedDHT = require('@hyperswarm/dht-relay')
 const { relay } = require('@hyperswarm/dht-relay')
 const Stream = require('..')
 
-const BOOTSTRAP_TIMEOUT = 180000
+const BOOTSTRAP_TIMEOUT = 600000
 const ONION_PORT = 18080
 
 test(
   'relayed DHT reaches a swarm peer through a real Tor v3 service',
-  { timeout: 300000 },
+  { timeout: 720000 },
   async (t) => {
     const backend = process.env.DHT_RELAY_TOR_TEST_BACKEND || 'tor'
     const externalOnion = process.env.DHT_RELAY_TOR_TEST_ONION || null
@@ -102,6 +102,8 @@ test(
             '3',
             '--HiddenServicePort',
             `${ONION_PORT} 127.0.0.1:${tcp.address().port}`,
+            '--FascistFirewall',
+            '1',
             '--Log',
             'notice stdout'
           ],
