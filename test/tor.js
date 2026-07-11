@@ -7,6 +7,7 @@ const path = require('path')
 const { spawn } = require('child_process')
 const createTestnet = require('hyperdht/testnet')
 const HyperDHT = require('hyperdht')
+const Hyperswarm = require('hyperswarm')
 const RelayedDHT = require('@hyperswarm/dht-relay')
 const { relay } = require('@hyperswarm/dht-relay')
 const Stream = require('..')
@@ -39,11 +40,11 @@ test(
     let torLogs = ''
     let tcp = null
     let relayDHT = null
-    let server = null
     let serverDHT = null
+    let serverSwarm = null
     let clientDHT = null
+    let clientSwarm = null
     let clientStream = null
-    let connection = null
     let cleaned = false
     let relayRemoteAddress = null
 
@@ -51,13 +52,13 @@ test(
       if (cleaned) return
       cleaned = true
 
-      if (connection) connection.destroy()
-      if (clientDHT) await clientDHT.destroy().catch(() => {})
+      if (clientSwarm) await clientSwarm.destroy().catch(() => {})
+      else if (clientDHT) await clientDHT.destroy().catch(() => {})
       if (clientStream) clientStream.destroy()
       if (tcp) await closeServer(tcp)
       if (relayDHT) await relayDHT.destroy().catch(() => {})
-      if (server) await server.close().catch(() => {})
-      if (serverDHT) await serverDHT.destroy().catch(() => {})
+      if (serverSwarm) await serverSwarm.destroy().catch(() => {})
+      else if (serverDHT) await serverDHT.destroy().catch(() => {})
       if (tor) await stopProcess(tor)
       await fs.promises.rm(root, { recursive: true, force: true }).catch(() => {})
     }
@@ -67,15 +68,17 @@ test(
     try {
       const testnet = await createTestnet(4, t.teardown)
       const { bootstrap } = testnet
+      const topic = b4a.alloc(32, 7)
 
       serverDHT = new HyperDHT({ bootstrap })
-      server = serverDHT.createServer((socket) => {
+      serverSwarm = new Hyperswarm({ dht: serverDHT })
+      serverSwarm.on('connection', (socket) => {
         socket.on('error', () => {})
         socket.on('data', (data) => {
           socket.write(b4a.concat([b4a.from('echo:'), data]))
         })
       })
-      await server.listen()
+      await serverSwarm.join(topic, { server: true, client: false }).flushed()
 
       relayDHT = new HyperDHT({ bootstrap })
       tcp = net.createServer((socket) => {
@@ -141,10 +144,11 @@ test(
       clientDHT = new RelayedDHT(clientStream)
       await clientDHT.ready()
 
-      connection = clientDHT.connect(server.publicKey)
-      const reply = await exchange(connection, b4a.from('tor-proof'))
+      clientSwarm = new Hyperswarm({ dht: clientDHT })
+      const reply = exchange(clientSwarm, b4a.from('tor-proof'))
+      clientSwarm.join(topic, { client: true, server: false })
 
-      t.is(reply, 'echo:tor-proof', 'payload crossed the relayed DHT over Tor')
+      t.is(await reply, 'echo:tor-proof', 'Hyperswarm payload crossed the relayed DHT over Tor')
       t.ok(
         isLoopback(relayRemoteAddress),
         `hidden-service relay saw only Tor on loopback (${relayRemoteAddress})`
@@ -247,7 +251,7 @@ function waitForTor(child, hostnameFile, getLogs) {
   })
 }
 
-function exchange(socket, message) {
+function exchange(swarm, message) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error('timed out waiting for the echo peer through Tor'))
@@ -255,15 +259,18 @@ function exchange(socket, message) {
 
     const done = (err, value) => {
       clearTimeout(timeout)
-      socket.off('error', onError)
+      swarm.off('connection', onConnection)
       if (err) reject(err)
       else resolve(value)
     }
     const onError = (err) => done(err)
+    const onConnection = (socket) => {
+      socket.once('error', onError)
+      socket.once('data', (data) => done(null, data.toString()))
+      socket.write(message)
+    }
 
-    socket.once('error', onError)
-    socket.once('open', () => socket.write(message))
-    socket.once('data', (data) => done(null, data.toString()))
+    swarm.once('connection', onConnection)
   })
 }
 

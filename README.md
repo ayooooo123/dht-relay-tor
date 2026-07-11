@@ -130,7 +130,8 @@ the same code path, differing only in how the socket is obtained).
 
 The real-network smoke test is opt-in. It starts a fresh Tor daemon and v3 onion
 service, then proves that a relayed DHT client can exchange `tor-proof` with a
-HyperDHT echo peer while the relay TCP socket sees only a loopback address:
+Hyperswarm echo peer discovered by topic while the relay TCP socket sees only a
+loopback address:
 
 ```sh
 DHT_RELAY_TOR_TEST_TOR=1 npm test
