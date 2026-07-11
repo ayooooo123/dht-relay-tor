@@ -1,0 +1,27 @@
+name: Tor smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: lts/*
+          cache: npm
+      - name: Install Tor
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes tor
+      - run: npm install
+      - name: Test the relayed DHT through a real Tor v3 service
+        run: npm test
+        env:
+          DHT_RELAY_TOR_TEST_TOR: '1'

@@ -126,6 +126,51 @@ Covers the SOCKS5 client against a mock proxy and an end-to-end relayed
 connection over the transport on a local testnet (no Tor required — it exercises
 the same code path, differing only in how the socket is obtained).
 
+### Real Tor smoke test
+
+The real-network smoke test is opt-in. It starts a fresh Tor daemon and v3 onion
+service, then proves that a relayed DHT client can exchange `tor-proof` with a
+HyperDHT echo peer while the relay TCP socket sees only a loopback address:
+
+```sh
+DHT_RELAY_TOR_TEST_TOR=1 npm test
+```
+
+Set `TOR_BIN=/path/to/tor` if `tor` is not on `PATH`. Tor bootstrap requires
+outbound network access to the public Tor network and may take up to three
+minutes. The test uses fresh temporary data and hidden-service directories and
+removes them during teardown.
+
+To reuse an already-published onion service, configure it to forward virtual
+port `18080` to a fixed loopback port and run the test in externally managed
+mode. For example, with the relay target on `127.0.0.1:40123` and Tor SOCKS on
+`127.0.0.1:9050`:
+
+```sh
+DHT_RELAY_TOR_TEST_TOR=1 \
+DHT_RELAY_TOR_TEST_ONION=<relay-onion> \
+DHT_RELAY_TOR_TEST_RELAY_PORT=40123 \
+DHT_RELAY_TOR_TEST_SOCKS_PORT=9050 \
+npm test
+```
+
+This mode does not start or modify Tor; the caller owns the onion service and
+its lifecycle. `DHT_RELAY_TOR_TEST_SOCKS_PORT` defaults to `9050`.
+
+The manual **Tor smoke** GitHub Actions workflow runs the same proof on an Ubuntu
+runner with Tor installed. Normal CI does not depend on Tor reachability.
+
+To exercise the optional Arti client backend against the Tor-hosted onion,
+place a locally built `bare-arti` sibling (including a prebuild for the current
+host) next to this repository and make it resolvable through `NODE_PATH`:
+
+```sh
+NODE_PATH=.. DHT_RELAY_TOR_TEST_TOR=1 DHT_RELAY_TOR_TEST_BACKEND=arti npm test
+```
+
+The Arti backend still needs public Tor egress. The system Tor process remains
+the onion-service host; Arti replaces only the masked client's SOCKS backend.
+
 ## Tradeoffs (read before using)
 
 - **Masking IP means giving up direct connections.** All traffic goes through the
