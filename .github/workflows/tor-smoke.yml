@@ -20,7 +20,7 @@ env:
   PROOF_POST_RESERVE_MS: '120000'
   PROOF_RETRY_DELAY_MS: '15000'
   SYSTEM_ATTEMPT_TIMEOUT_MS: '540000'
-  EMBEDDED_ATTEMPT_TIMEOUT_MS: '660000'
+  EMBEDDED_ATTEMPT_TIMEOUT_MS: '690000'
 
 # This Linux workflow proves the linux-x64 addon and Tor data path. It does not
 # establish macOS publish readiness; a future darwin release proof must build
@@ -484,7 +484,7 @@ jobs:
         env:
           DHT_RELAY_TOR_TEST_TOR: '1'
           DHT_RELAY_TOR_TEST_BACKEND: arti
-          DHT_RELAY_TOR_TOR_BOOTSTRAP_TIMEOUT: '90000'
+          DHT_RELAY_TOR_TOR_BOOTSTRAP_TIMEOUT: '120000'
           DHT_RELAY_TOR_ARTI_BOOTSTRAP_TIMEOUT: '450000'
           DHT_RELAY_TOR_EXCHANGE_TIMEOUT: '60000'
           DHT_RELAY_TOR_CLEANUP_TIMEOUT: '20000'
@@ -510,8 +510,8 @@ jobs:
             node test/classify-tor-proof-failure.js "$log" | tee "$classification"
             classification_status=${PIPESTATUS[0]}
             set -e
-            if [[ "$attempt" -lt 2 && "$classification_status" -eq 0 ]] && grep -Fq '"class":"descriptor-publication-transient"' "$classification"; then
-              echo 'retrying a recognized hidden-service descriptor publication transient' >&2
+            if [[ "$attempt" -lt 2 && "$classification_status" -eq 0 ]] && grep -Eq '"class":"(descriptor-publication-transient|host-tor-consensus-bootstrap-transient)"' "$classification"; then
+              echo 'retrying a recognized Tor network transient' >&2
               sleep "$((PROOF_RETRY_DELAY_MS / 1000))"
               continue
             fi

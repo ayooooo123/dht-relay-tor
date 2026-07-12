@@ -92,6 +92,9 @@ test('Tor proof workflow strictly bounds two attempts and post-failure evidence 
     t.is(configured.OUTER_TEST_TIMEOUT, values[attempt], `${job} uses its bounded attempt`)
   }
   t.ok(values.EMBEDDED_ATTEMPT_TIMEOUT_MS > 585000, 'embedded attempt exceeds observed proof')
+  t.is(values.EMBEDDED_ATTEMPT_TIMEOUT_MS, 690000, 'embedded attempt preserves strict reserves')
+  t.ok(/DHT_RELAY_TOR_TOR_BOOTSTRAP_TIMEOUT:\s*'120000'/.test(workflow))
+  t.ok(/host-tor-consensus-bootstrap-transient/.test(workflow))
   t.ok(/DHT_RELAY_TOR_OUTER_TEST_TIMEOUT/.test(workflow))
   t.ok(/DHT_RELAY_TOR_ARTI_BOOTSTRAP_TIMEOUT/.test(workflow))
   t.is(
@@ -155,12 +158,13 @@ test('embedded proof rebuilds, packs, and verifies the exact bare-arti checkout'
   t.ok(/actions\/upload-artifact@/.test(workflow))
 })
 
-test('Tor retries are descriptor-specific and never classify integrity failures as transient', (t) => {
+test('Tor retries are structured and never classify integrity failures as transient', (t) => {
   const workflow = fs.readFileSync(workflowPath, 'utf8')
   const torTest = fs.readFileSync(path.join(__dirname, 'tor.js'), 'utf8')
 
   t.ok(/node test\/classify-tor-proof-failure\.js/.test(workflow))
   t.ok(/descriptor-publication-transient/.test(workflow))
+  t.ok(/host-tor-consensus-bootstrap-transient/.test(workflow))
   t.absent(/grep -Eiq 'onion service descriptor/.test(workflow))
   t.ok(/TERMINAL_PREFIX/.test(torTest), 'real Tor test emits the structured terminal marker')
 })

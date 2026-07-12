@@ -23,6 +23,10 @@ const DESCRIPTOR = [
   /HSDir.*(?:unavailable|failed)/i,
   /Giving up\. \(waiting for rendezvous desc\)/i
 ]
+const HOST_TOR_CONSENSUS_BOOTSTRAP = [
+  /Tor did not bootstrap and publish its v3 hostname within [1-9][0-9]*ms/i,
+  /Bootstrapped 25% \(requesting_status\): Asking for networkstatus consensus/i
+]
 const TERMINAL_PREFIX = 'DHT_RELAY_TOR_TERMINAL '
 
 module.exports = function classifyTorProofFailure(log) {
@@ -32,6 +36,9 @@ module.exports = function classifyTorProofFailure(log) {
   if (matches(PAYLOAD, log)) return { retry: false, class: 'terminal-payload' }
   if (matches(DESCRIPTOR, log)) {
     return { retry: true, class: 'descriptor-publication-transient' }
+  }
+  if (HOST_TOR_CONSENSUS_BOOTSTRAP.every((pattern) => pattern.test(log))) {
+    return { retry: true, class: 'host-tor-consensus-bootstrap-transient' }
   }
   return { retry: false, class: 'other-terminal' }
 }

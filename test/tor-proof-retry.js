@@ -81,6 +81,43 @@ test('Tor proof retry rejects unrelated failures', (t) => {
   })
 })
 
+test('Tor proof retry accepts an exact host Tor consensus bootstrap stall', (t) => {
+  const log = fullTap(
+    'Error: Tor did not bootstrap and publish its v3 hostname within 120000ms\n' +
+      'Bootstrapped 25% (requesting_status): Asking for networkstatus consensus'
+  )
+
+  t.alike(classifyTorProofLog(log), {
+    retry: true,
+    class: 'host-tor-consensus-bootstrap-transient'
+  })
+})
+
+test('host Tor bootstrap retry stays fail-closed without a consensus stall', (t) => {
+  t.alike(
+    classifyTorProofFailure(
+      'Tor did not bootstrap and publish its v3 hostname within 120000ms\n' +
+        'Bootstrapped 10% (conn_done): Connected to a relay'
+    ),
+    { retry: false, class: 'other-terminal' }
+  )
+})
+
+test('host Tor consensus retry stays fail-closed for payload and integrity failures', (t) => {
+  const consensus =
+    'Tor did not bootstrap and publish its v3 hostname within 120000ms\n' +
+    'Bootstrapped 25% (requesting_status): Asking for networkstatus consensus'
+
+  t.alike(classifyTorProofFailure(`${consensus}\nHyperswarm exchange timed out`), {
+    retry: false,
+    class: 'terminal-payload'
+  })
+  t.alike(classifyTorProofFailure(`${consensus}\nbare-arti provenance SHA-256 does not match`), {
+    retry: false,
+    class: 'terminal-integrity-or-load'
+  })
+})
+
 test('Tor proof retry ignores passing TAP titles and accepts the structured descriptor failure', (t) => {
   const log = fullTap('Onion service descriptor not found at the selected HSDir')
 

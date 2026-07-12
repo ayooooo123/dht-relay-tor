@@ -20,13 +20,13 @@ test('real Tor harness imports every deadline passed to its Bare child', (t) => 
 
 test('Tor proof deadlines accept a bounded embedded workflow profile', (t) => {
   const configured = deadlines.loadDeadlines({
-    DHT_RELAY_TOR_TOR_BOOTSTRAP_TIMEOUT: '90000',
+    DHT_RELAY_TOR_TOR_BOOTSTRAP_TIMEOUT: '120000',
     DHT_RELAY_TOR_ARTI_BOOTSTRAP_TIMEOUT: '450000',
     DHT_RELAY_TOR_EXCHANGE_TIMEOUT: '60000',
     DHT_RELAY_TOR_CLEANUP_TIMEOUT: '20000',
     DHT_RELAY_TOR_PROCESS_KILL_TIMEOUT: '10000',
     DHT_RELAY_TOR_OUTER_CLEANUP_RESERVE: '20000',
-    DHT_RELAY_TOR_OUTER_TEST_TIMEOUT: '660000',
+    DHT_RELAY_TOR_OUTER_TEST_TIMEOUT: '690000',
     DHT_RELAY_TOR_WORKFLOW_CLEANUP_RESERVE: '120000',
     DHT_RELAY_TOR_WORKFLOW_TIMEOUT: '1800000'
   })
@@ -45,13 +45,13 @@ test('Tor proof deadlines reject an outer timeout without strict cleanup reserve
   t.exception(
     () =>
       deadlines.loadDeadlines({
-        DHT_RELAY_TOR_TOR_BOOTSTRAP_TIMEOUT: '90000',
+        DHT_RELAY_TOR_TOR_BOOTSTRAP_TIMEOUT: '120000',
         DHT_RELAY_TOR_ARTI_BOOTSTRAP_TIMEOUT: '450000',
         DHT_RELAY_TOR_EXCHANGE_TIMEOUT: '60000',
         DHT_RELAY_TOR_CLEANUP_TIMEOUT: '20000',
         DHT_RELAY_TOR_PROCESS_KILL_TIMEOUT: '10000',
         DHT_RELAY_TOR_OUTER_CLEANUP_RESERVE: '30000',
-        DHT_RELAY_TOR_OUTER_TEST_TIMEOUT: '660000'
+        DHT_RELAY_TOR_OUTER_TEST_TIMEOUT: '690000'
       }),
     /strictly below.*outer/i
   )
