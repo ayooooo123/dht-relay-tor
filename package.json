@@ -31,6 +31,7 @@
   },
   "devDependencies": {
     "@hyperswarm/dht-relay": "^0.4.3",
+    "bare-runtime": "1.30.3",
     "brittle": "^3.0.0",
     "hyperdht": "^6.21.0",
     "hyperswarm": "^4.17.0",

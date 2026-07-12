@@ -95,12 +95,40 @@ system `tor`:
 const { connect } = require('dht-relay-tor/arti')
 const DHT = require('@hyperswarm/dht-relay')
 
-const dht = new DHT(await connect({ onion: '<relay>.onion' }))
+// PearTube's platform adapter supplies an absolute app-private directory.
+const stream = await connect({
+  onion: '<relay>.onion',
+  dataDir: absoluteAppPrivateDirectory,
+  artiBackend: 'addon'
+})
+const dht = new DHT(stream)
 ```
 
 `bare-arti` starts Arti (Rust Tor) in the background, exposes a local SOCKS5 port,
 and this transport dials through it — nothing to install or run separately. See
 bare-arti's README for build/prebuild details.
+
+The preferred PearTube integration keeps the UI to one Tor switch while its
+platform adapter supplies `dataDir`. The adapter owns the semantic guarantee
+that this absolute path is app-private; this package cannot infer that guarantee
+from an arbitrary absolute path. `bare-arti` resolves state storage in this
+order: explicit `dataDir`, then `BARE_ARTI_DATA`. A mobile addon fails closed
+with `ERR_ARTI_CONFIG` if neither is available. The desktop sidecar may retain
+its existing OS-default state directory.
+
+`artiBackend: 'addon'` selects the in-process addon. `bootstrapTimeout` is
+forwarded to `bare-arti` as its startup timeout. `insecureFsPermissions` is a
+sidecar-only container escape hatch and is rejected by the addon; all validation
+and backend-specific behavior for these options is delegated to `bare-arti`.
+The Arti entry rejects `proxyHost` and `proxyPort` because its loopback SOCKS
+endpoint is owned by the acquired Arti instance.
+
+Each Arti entry/controller permits one starting or active transport. Process-wide
+coordination lives in `bare-arti`: every transport holds a lease, so one consumer
+cannot stop Arti while another consumer still owns it. Closing the stream, or a
+terminal stream error, releases that lease. The returned stream exposes
+`stream.artiStopped`, which callers may await to observe completed cleanup. A
+shutdown failure rejects that promise with `ERR_ARTI_SHUTDOWN`.
 
 ## Run it over real Tor (external daemon)
 
@@ -160,6 +188,12 @@ its lifecycle. `DHT_RELAY_TOR_TEST_SOCKS_PORT` defaults to `9050`.
 
 The manual **Tor smoke** GitHub Actions workflow runs the same proof on an Ubuntu
 runner with Tor installed. Normal CI does not depend on Tor reachability.
+
+The relay's loopback source assertion is evidence that the tested onion relay
+did not observe the client's public IP. It is not a whole-process leak audit and
+does not prove that every socket opened by an application uses Tor. It also is
+not mobile runtime proof: mobile release testing must load the produced addon
+and audit the app's network activity on each target runtime.
 
 To exercise the optional Arti client backend against the Tor-hosted onion,
 place a locally built `bare-arti` sibling (including a prebuild for the current
