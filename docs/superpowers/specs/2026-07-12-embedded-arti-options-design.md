@@ -36,7 +36,7 @@ options and adds these Arti-specific inputs:
 - `insecureFsPermissions`: existing container escape hatch for Arti's
   `fs-mistrust` checks.
 
-The transport passes a new object to `bare-arti.start()`:
+The transport passes a new object to `bare-arti.acquire()`:
 
 ```js
 {
@@ -51,7 +51,7 @@ Undefined fields are omitted. Arti-specific inputs are removed before calling
 `Stream.connect()` so they cannot leak into SecretStream or SOCKS options.
 Caller-supplied `proxyHost` and `proxyPort` are rejected by the Arti entry: its
 SOCKS endpoint is always forced to `127.0.0.1` and the port returned by
-`bare-arti`.
+`bare-arti`. Either override rejects `ERR_ARTI_CONFIG`.
 
 The preferred PearTube call shape is:
 
@@ -81,7 +81,8 @@ Resolution order:
 Only `undefined` means absent. An explicit empty, non-string, or relative
 `dataDir` rejects instead of falling through. A present but empty or relative
 `BARE_ARTI_DATA` also rejects instead of falling through. The outer
-`bare-arti.start()` boundary resolves the source once into an immutable
+`bare-arti.start()` or `bare-arti.acquire()` boundary resolves the source once
+into an immutable
 configuration used for backend selection, conflict matching, and addon
 validation; repeated matching never rereads a mutable environment.
 
@@ -105,22 +106,40 @@ deterministic.
 
 ## Lifecycle and Error Handling
 
-`dht-relay-tor/arti.connect()` owns at most one active or starting transport per
-module instance. A second `connect()` rejects `ERR_ARTI_CONFIG_CONFLICT` rather
-than sharing a singleton Arti service that either stream could stop underneath
-the other. This matches PearTube's intended one-relayed-DHT-per-client shape and
-avoids pretending that the lower-level `bare-arti` singleton is reference
-counted.
+`bare-arti` owns process-wide reference counting because it owns the process-wide
+Tor singleton. It adds `acquire(options)`, which returns a distinct lease
+`{ port, backend, release }` for every matching acquisition. Each `release()` is
+idempotent. Native Arti stops only after the final acquired lease and the legacy
+owner described below have both released ownership. Conflicting configurations
+still reject `ERR_ARTI_CONFIG_CONFLICT`.
 
-The entry starts Arti, then opens the onion transport. If the onion connection
-fails, it awaits `tor.stop()` before rethrowing the original connection error
+Existing `start()/stop()` behavior remains compatible and represents one
+legacy owner regardless of repeated matching `start()` calls. `stop()` or the
+legacy service's `stop()` releases only that legacy owner; it cannot stop native
+Arti while acquired leases remain. Conversely, releasing the final acquired
+lease cannot stop native Arti while the legacy owner remains. Two independently
+installed `dht-relay-tor` copies and unrelated direct `bare-arti` consumers are
+therefore coordinated at the actual singleton boundary.
+
+`dht-relay-tor/arti.connect()` uses `acquire()`, never the legacy `start()` API.
+It may retain a module-local active/start guard as an early diagnostic, but that
+guard is not a correctness boundary.
+
+The entry acquires Arti, then opens the onion transport. If the onion connection
+fails, it awaits `lease.release()` before rethrowing the original connection error
 unless shutdown fails, in which case the shutdown error is surfaced with the
 connection error as its cause. A successful transport installs one idempotent
 `stopOnce()` for close/error races. The stream exposes `artiStopped`, the exact
 cleanup promise. The implementation immediately attaches a no-op rejection
 handler to prevent an unhandled rejection, while callers can still await the
 original promise and observe `ERR_ARTI_SHUTDOWN`. Ownership clears only after
-cleanup settles, so restart cannot overlap shutdown.
+cleanup settles, so restart cannot overlap shutdown. If acquisition itself
+rejects before producing a lease, integration ownership clears immediately and
+a later call may retry.
+
+A stream `error` is terminal for this transport. The handler destroys the
+stream, then invokes `stopOnce()`; a stream cannot remain apparently usable
+after its Tor lease has been released.
 
 All documented `bare-arti` errors retain their codes. In particular, missing
 mobile storage rejects `ERR_ARTI_CONFIG`; a missing native module rejects
@@ -144,7 +163,8 @@ entry point. Tests use fake `bare-arti` and transport dependencies to prove:
 - a connection failure stops Arti and preserves the error contract;
 - a second active or starting connection rejects without stopping the first;
 - close/error races stop Arti exactly once, expose the same `artiStopped`
-  promise, and a rejected shutdown never becomes unhandled.
+  promise, and a rejected shutdown never becomes unhandled;
+- acquisition failure clears local ownership and a later connection can retry.
 
 `bare-arti` validation tests prove explicit directory precedence,
 `BARE_ARTI_DATA` fallback, desktop sidecar default preservation, and mobile
@@ -152,6 +172,13 @@ fail-closed behavior when both sources are absent. They also prove invalid
 higher-precedence values never fall through, the environment is resolved once,
 desktop-default sidecar accepts the boolean permission escape hatch, and addon
 selection rejects `insecureFsPermissions: true`.
+
+`bare-arti` ownership tests create leases through two independent integration
+helpers plus a direct legacy `start()` consumer. They prove releasing either
+lease cannot stop the other, legacy `stop()` cannot stop acquired leases,
+releasing all leases cannot stop the legacy owner, final release stops native
+Arti exactly once, conflicting configurations reject, and failed acquisition
+does not retain a reference.
 
 ### Real-network embedded-Arti proof
 
