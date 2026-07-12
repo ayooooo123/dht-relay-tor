@@ -49,6 +49,9 @@ The transport passes a new object to `bare-arti.start()`:
 
 Undefined fields are omitted. Arti-specific inputs are removed before calling
 `Stream.connect()` so they cannot leak into SecretStream or SOCKS options.
+Caller-supplied `proxyHost` and `proxyPort` are rejected by the Arti entry: its
+SOCKS endpoint is always forced to `127.0.0.1` and the port returned by
+`bare-arti`.
 
 The preferred PearTube call shape is:
 
@@ -70,17 +73,31 @@ consumers need the same validation.
 
 Resolution order:
 
-1. A non-empty explicit `options.dataDir`.
-2. A non-empty `BARE_ARTI_DATA` value.
+1. An explicit `options.dataDir`.
+2. A present `BARE_ARTI_DATA` value.
 3. On desktop sidecar only, the existing sidecar default.
 4. Otherwise reject with `ERR_ARTI_CONFIG`.
+
+Only `undefined` means absent. An explicit empty, non-string, or relative
+`dataDir` rejects instead of falling through. A present but empty or relative
+`BARE_ARTI_DATA` also rejects instead of falling through. The outer
+`bare-arti.start()` boundary resolves the source once into an immutable
+configuration used for backend selection, conflict matching, and addon
+validation; repeated matching never rereads a mutable environment.
 
 The resolved addon directory is still canonicalized and validated by
 `validateAddonOptions()`: it must be absolute, a directory, owner-only where the
 runtime exposes permission metadata, owned by the current user where UID data
 exists, and not a final symlink on Android or iOS. `insecureFsPermissions` is
-not accepted by the addon path; it remains a documented sidecar/container
-option and must not weaken mobile addon validation.
+accepted only as `false` by the addon path; `true` rejects `ERR_ARTI_CONFIG`. It
+remains a documented sidecar/container option and must not weaken mobile addon
+validation. Backend-specific validation happens inside `bare-arti` after
+selection, so an omitted backend is still validated correctly when desktop
+selects sidecar or mobile selects addon.
+
+These filesystem checks establish path, ownership, mode, and symlink
+invariants. They cannot prove that an arbitrary absolute path is semantically
+app-private. PearTube's platform adapter owns that guarantee.
 
 No code mutates `process.env`. Environment fallback is read once per start
 validation through an injected environment dependency so tests remain
@@ -88,11 +105,22 @@ deterministic.
 
 ## Lifecycle and Error Handling
 
-`dht-relay-tor/arti.connect()` starts Arti, then opens the onion transport. If
-the onion connection fails, it awaits `tor.stop()` before rethrowing the original
-connection error unless shutdown fails, in which case the shutdown error is
-surfaced with the connection error as its cause. A successful transport stops
-Arti once when the stream closes.
+`dht-relay-tor/arti.connect()` owns at most one active or starting transport per
+module instance. A second `connect()` rejects `ERR_ARTI_CONFIG_CONFLICT` rather
+than sharing a singleton Arti service that either stream could stop underneath
+the other. This matches PearTube's intended one-relayed-DHT-per-client shape and
+avoids pretending that the lower-level `bare-arti` singleton is reference
+counted.
+
+The entry starts Arti, then opens the onion transport. If the onion connection
+fails, it awaits `tor.stop()` before rethrowing the original connection error
+unless shutdown fails, in which case the shutdown error is surfaced with the
+connection error as its cause. A successful transport installs one idempotent
+`stopOnce()` for close/error races. The stream exposes `artiStopped`, the exact
+cleanup promise. The implementation immediately attaches a no-op rejection
+handler to prevent an unhandled rejection, while callers can still await the
+original promise and observe `ERR_ARTI_SHUTDOWN`. Ownership clears only after
+cleanup settles, so restart cannot overlap shutdown.
 
 All documented `bare-arti` errors retain their codes. In particular, missing
 mobile storage rejects `ERR_ARTI_CONFIG`; a missing native module rejects
@@ -107,32 +135,53 @@ Refactor the Arti entry around an injectable helper without changing the public
 entry point. Tests use fake `bare-arti` and transport dependencies to prove:
 
 - explicit `dataDir`, `artiBackend`, and bootstrap timeout are forwarded;
-- `insecureFsPermissions` is forwarded only to the sidecar-compatible start
-  contract and never passed to `Stream.connect()`;
-- unrelated onion/SOCKS/SecretStream options reach `Stream.connect()`;
+- `insecureFsPermissions` is forwarded only to `bare-arti` and never passed to
+  `Stream.connect()`;
+- unrelated onion/SecretStream options reach `Stream.connect()`;
+- caller-supplied `proxyHost` and `proxyPort` reject instead of overriding the
+  embedded SOCKS endpoint;
 - all Arti-only keys are absent from the transport options;
 - a connection failure stops Arti and preserves the error contract;
-- stream close stops Arti exactly once.
+- a second active or starting connection rejects without stopping the first;
+- close/error races stop Arti exactly once, expose the same `artiStopped`
+  promise, and a rejected shutdown never becomes unhandled.
 
 `bare-arti` validation tests prove explicit directory precedence,
 `BARE_ARTI_DATA` fallback, desktop sidecar default preservation, and mobile
-fail-closed behavior when both sources are absent.
+fail-closed behavior when both sources are absent. They also prove invalid
+higher-precedence values never fall through, the environment is resolved once,
+desktop-default sidecar accepts the boolean permission escape hatch, and addon
+selection rejects `insecureFsPermissions: true`.
 
 ### Real-network embedded-Arti proof
 
-Extend the manual Tor smoke workflow with an `arti` job that:
+Extend the manual Tor smoke workflow with an `arti` job using a two-process
+harness. A Node orchestrator owns `hyperdht/testnet`, the Hyperswarm echo peer,
+the relay TCP server, the system-Tor onion service, and final assertions. A
+pinned Bare runtime child loads the exact host addon, calls
+`dht-relay-tor/arti`, performs relayed topic discovery/exchange, and prints one
+machine-readable result for the orchestrator.
+
+The job:
 
 1. Checks out an exact reviewed `bare-arti` commit rather than a floating
    branch.
-2. Builds and loads the host addon (or consumes a checksum-verified artifact
-   produced by that exact commit).
-3. Starts system Tor only as the v3 onion-service host.
-4. Starts the masked client with `DHT_RELAY_TOR_TEST_BACKEND=arti`, an explicit
-   private `dataDir`, and the addon backend.
-5. Discovers a Hyperswarm server by topic through `@hyperswarm/dht-relay`.
-6. Exchanges the exact `tor-proof` payload.
-7. Asserts the onion relay socket sees only a loopback source.
-8. Tears down both Arti and system Tor within the workflow timeout.
+2. Pins the Bare runtime, Node, Rust, and native build-tool versions.
+3. Builds, packages, and installs `bare-arti` from that literal SHA, or consumes
+   an artifact whose manifest identifies the producing workflow run and exact
+   source SHA; module resolution must be asserted to point to that checkout.
+4. Starts system Tor only as the v3 onion-service host, with its own `0700` data
+   directory.
+5. Starts the Bare masked client with a separate explicit `0700` Arti
+   `dataDir` and the addon backend.
+6. Discovers a Hyperswarm server by topic through `@hyperswarm/dht-relay`.
+7. Exchanges the exact `tor-proof` payload.
+8. Asserts the onion relay socket sees only a loopback source.
+9. Tears down both Arti and system Tor within the workflow timeout.
+
+The repository commits its npm lockfile and uses `npm ci`. The job records both
+repository SHAs and all pinned tool versions in its summary. A checksum without
+source-run/SHA provenance is insufficient.
 
 The system-Tor smoke test stays as a separate control. Neither real-network job
 becomes a required normal-CI check because public Tor reachability is inherently
@@ -141,9 +190,9 @@ variable.
 ## Privacy Claims and Remaining Gates
 
 A green embedded-Arti smoke test proves that the Holepunch/Hyperswarm data path
-works over an Arti-owned Tor client and that the onion relay does not observe the
-masked client's source IP. It does not prove that a whole application has no
-clearnet sockets.
+works over an Arti-owned Tor client. The loopback assertion is evidence only
+about what the onion relay endpoint observes; it is not a process-wide IP-leak
+audit. The test does not prove that a whole application has no clearnet sockets.
 
 Before enabling the PearTube switch by default, each mobile runtime must also:
 
