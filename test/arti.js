@@ -41,6 +41,12 @@ async function rejection(promise) {
   throw new Error('expected promise to reject')
 }
 
+async function closeAndFlush(stream) {
+  stream.emit('close')
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
 test('Arti transport keeps acquisition and stream options separated', async (t) => {
   const acquired = []
   const connected = []
@@ -91,8 +97,7 @@ test('Arti transport keeps acquisition and stream options separated', async (t) 
       proxyPort: 19411
     }
   ])
-  stream.emit('close')
-  await stream.artiStopped
+  await closeAndFlush(stream)
   t.is(releases, 1)
 })
 
@@ -111,8 +116,7 @@ test('Arti transport omits undefined acquisition fields', async (t) => {
 
   await transport.connect({ dataDir: undefined, onion: 'relay.onion' })
   t.alike(acquired, {})
-  stream.emit('close')
-  await stream.artiStopped
+  await closeAndFlush(stream)
 })
 
 test('Arti transport rejects owned proxy overrides before acquisition', async (t) => {
@@ -150,8 +154,7 @@ test('Arti transport retries after acquisition rejection', async (t) => {
   const err = await rejection(transport.connect())
   t.is(err.code, 'ERR_ARTI_BOOTSTRAP')
   t.is(await transport.connect(), stream)
-  stream.emit('close')
-  await stream.artiStopped
+  await closeAndFlush(stream)
 })
 
 test('Arti transport rejects a second starting or active connection', async (t) => {
@@ -169,8 +172,7 @@ test('Arti transport rejects a second starting or active connection', async (t) 
   await first
   err = await rejection(transport.connect())
   t.is(err.code, 'ERR_ARTI_CONFIG_CONFLICT')
-  firstStream.emit('close')
-  await firstStream.artiStopped
+  await closeAndFlush(firstStream)
 })
 
 test('Arti transport releases after connection failure', async (t) => {
@@ -206,11 +208,9 @@ test('Arti entry is lazy and caches one successful controller', async (t) => {
 
   t.is(loads, 0)
   t.is(await entry.connect(), streams[0])
-  streams[0].emit('close')
-  await streams[0].artiStopped
+  await closeAndFlush(streams[0])
   t.is(await entry.connect(), streams[1])
-  streams[1].emit('close')
-  await streams[1].artiStopped
+  await closeAndFlush(streams[1])
   t.is(loads, 1)
 })
 
@@ -244,8 +244,7 @@ test('Arti entry retries a failed package load', async (t) => {
   const err = await rejection(entry.connect())
   t.is(err.code, 'ERR_TEMPORARY')
   t.is(await entry.connect(), stream)
-  stream.emit('close')
-  await stream.artiStopped
+  await closeAndFlush(stream)
   t.is(loads, 2)
 })
 
@@ -286,8 +285,7 @@ test('concurrent Arti entry connects share one controller guard', async (t) => {
   acquisition.resolve({ port: 7, release: async () => {} })
   t.is(await first, stream)
   t.is(loads, 1)
-  stream.emit('close')
-  await stream.artiStopped
+  await closeAndFlush(stream)
 })
 
 test('public Arti entry require stays lazy', (t) => {
