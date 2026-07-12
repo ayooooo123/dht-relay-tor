@@ -112,23 +112,29 @@ The preferred PearTube integration keeps the UI to one Tor switch while its
 platform adapter supplies `dataDir`. The adapter owns the semantic guarantee
 that this absolute path is app-private; this package cannot infer that guarantee
 from an arbitrary absolute path. `bare-arti` resolves state storage in this
-order: explicit `dataDir`, then `BARE_ARTI_DATA`. A mobile addon fails closed
-with `ERR_ARTI_CONFIG` if neither is available. The desktop sidecar may retain
-its existing OS-default state directory.
+order: explicit `dataDir`, then `BARE_ARTI_DATA`. An addon fails closed with
+`ERR_ARTI_CONFIG` if neither is available, including an explicit desktop addon
+and the mobile default. Only the desktop sidecar may retain its existing
+OS-default state directory.
 
 `artiBackend: 'addon'` selects the in-process addon. `bootstrapTimeout` is
-forwarded to `bare-arti` as its startup timeout. `insecureFsPermissions` is a
-sidecar-only container escape hatch and is rejected by the addon; all validation
-and backend-specific behavior for these options is delegated to `bare-arti`.
-The Arti entry rejects `proxyHost` and `proxyPort` because its loopback SOCKS
-endpoint is owned by the acquired Arti instance.
+forwarded to `bare-arti` as its startup timeout. Setting
+`insecureFsPermissions: true` is a sidecar-only container escape hatch; the addon
+accepts an omitted or `false` value and rejects `true`. All validation and
+backend-specific behavior for these options is delegated to `bare-arti`. The
+Arti entry rejects `proxyHost` and `proxyPort` because its loopback SOCKS endpoint
+is owned by the acquired Arti instance.
 
-Each Arti entry/controller permits one starting or active transport. Process-wide
-coordination lives in `bare-arti`: every transport holds a lease, so one consumer
-cannot stop Arti while another consumer still owns it. Closing the stream, or a
-terminal stream error, releases that lease. The returned stream exposes
-`stream.artiStopped`, which callers may await to observe completed cleanup. A
-shutdown failure rejects that promise with `ERR_ARTI_SHUTDOWN`.
+Each Arti entry/controller permits one starting or active transport. Within one
+JavaScript realm, coordination lives in `bare-arti`: every transport holds a
+lease, so one same-realm consumer cannot stop Arti while another still owns it.
+Separate worker realms do not share these JavaScript leases. The native addon
+rejects conflicting cross-realm ownership with `ERR_ARTI_REALM_CONFLICT` rather
+than treating it as a shared lease; desktop sidecars are not lease-coordinated
+across realms. Closing the stream, or a terminal stream error, releases its
+lease. The returned stream exposes `stream.artiStopped`, which callers may await
+to observe completed cleanup. A shutdown failure rejects that promise with
+`ERR_ARTI_SHUTDOWN`.
 
 ## Run it over real Tor (external daemon)
 
