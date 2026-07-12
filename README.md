@@ -125,6 +125,14 @@ backend-specific behavior for these options is delegated to `bare-arti`. The
 Arti entry rejects `proxyHost` and `proxyPort` because its loopback SOCKS endpoint
 is owned by the acquired Arti instance.
 
+This entry unconditionally gives `bare-arti` the relay reachability policy
+`reachableAddresses: ['*:80', '*:443']`; callers cannot override it through
+`dht-relay-tor/arti`. The policy limits Arti's direct connections to Tor relays,
+not destinations requested through the local SOCKS proxy, so the `.onion` relay
+and Hyperswarm payload still travel inside Tor. Restricting relay ports can
+reduce the set of available Tor relays and may make bootstrap less reliable on
+some networks.
+
 Each Arti entry/controller permits one starting or active transport. Within one
 JavaScript realm, coordination lives in `bare-arti`: every transport holds a
 lease, so one same-realm consumer cannot stop Arti while another still owns it.
