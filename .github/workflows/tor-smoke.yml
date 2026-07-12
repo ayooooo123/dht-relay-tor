@@ -187,7 +187,9 @@ jobs:
             --build "$debug_build" \
             --prefix "$BARE_ARTI_SOURCE/prebuilds"
           mkdir -p "$GITHUB_WORKSPACE/evidence-debug"
-          node_modules/.bin/bare test/addon.js | tee "$GITHUB_WORKSPACE/evidence-debug/addon-test.log"
+          bare_bin="$(node -p "require('bare-runtime')('bare')")"
+          chmod +x "$bare_bin"
+          "$bare_bin" test/addon.js | tee "$GITHUB_WORKSPACE/evidence-debug/addon-test.log"
           {
             printf 'bare-arti-sha=%s\n' "$(git rev-parse HEAD)"
             printf 'cmake=%s\n' "$("$locked_cmake" --version | sed -n '1p')"

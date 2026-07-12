@@ -121,7 +121,7 @@ test('embedded proof rebuilds, packs, and verifies the exact bare-arti checkout'
   t.ok(/release_build="\$\(mktemp -d\)"/.test(workflow))
   t.ok(/BARE_ARTI_TESTING:BOOL=ON/.test(workflow), 'enables debug-only addon hooks')
   t.ok(/CMAKE_BUILD_TYPE:STRING=Debug/.test(workflow))
-  t.ok(/bare test\/addon\.js/.test(workflow))
+  t.ok(/"\$bare_bin" test\/addon\.js/.test(workflow))
   t.ok(/BARE_ARTI_TESTING:BOOL=OFF/.test(workflow), 'disables deterministic addon hooks')
   t.ok(/CMAKE_BUILD_TYPE:STRING=Release/.test(workflow))
   t.ok(/cmake-bare\/package\.json/.test(workflow))
@@ -132,7 +132,8 @@ test('embedded proof rebuilds, packs, and verifies the exact bare-arti checkout'
     'restores the packaged CMake executable mode in both addon builds'
   )
   t.ok(/require\('bare-runtime'\)\('bare'\)/.test(workflow))
-  t.ok(/chmod \+x "\$bare_bin"/.test(workflow))
+  t.ok((workflow.match(/chmod \+x "\$bare_bin"/g) || []).length >= 3)
+  t.ok(/"\$bare_bin" test\/addon\.js/.test(workflow))
   t.ok(/bare-package=%s/.test(workflow))
   t.ok(/bare-binary-sha256=%s/.test(workflow))
   t.ok(/CMakeCCompiler\.cmake/.test(workflow))
