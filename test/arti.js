@@ -429,11 +429,6 @@ test('Arti transport keeps ownership until cleanup settles', async (t) => {
 })
 
 test('Arti transport observes automatic cleanup rejection', async (t) => {
-  if (typeof process === 'undefined' || typeof process.on !== 'function') {
-    t.pass('process rejection events are unavailable')
-    return
-  }
-
   const shutdownFailure = error('ERR_NATIVE_STOP', 'native stop failed')
   const stream = fakeStream()
   const transport = createArtiTransport({
@@ -445,21 +440,25 @@ test('Arti transport observes automatic cleanup rejection', async (t) => {
     },
     Stream: { connect: () => stream }
   })
+  const observesUnhandled =
+    typeof process !== 'undefined' &&
+    typeof process.on === 'function' &&
+    typeof process.off === 'function'
   const unhandled = []
   const onUnhandled = (reason) => unhandled.push(reason)
-  process.on('unhandledRejection', onUnhandled)
+  if (observesUnhandled) process.on('unhandledRejection', onUnhandled)
 
   try {
     const connected = await transport.connect()
     const stopped = connected.artiStopped
     stream.emit('close')
     await new Promise((resolve) => setTimeout(resolve, 0))
-    t.alike(unhandled, [])
+    if (observesUnhandled) t.alike(unhandled, [])
     const failure = await rejection(stopped)
     t.is(failure.code, 'ERR_ARTI_SHUTDOWN')
     t.is(failure.shutdownError, shutdownFailure)
   } finally {
-    process.removeListener('unhandledRejection', onUnhandled)
+    if (observesUnhandled) process.off('unhandledRejection', onUnhandled)
   }
 })
 
