@@ -14,7 +14,7 @@ env:
   CMAKE_RUNTIME_VERSION: '4.3.1'
   CMAKE_BARE_VERSION: '1.8.0'
   CMAKE_CARGO_VERSION: '0.0.4'
-  BARE_ARTI_SHA: d628e48498eec43f665a21dcf0015005683150ab
+  BARE_ARTI_SHA: 342ebb563e406188258fbb11ff91c00aa8777488
   WORKFLOW_TIMEOUT_MS: '1800000'
   PROOF_SETUP_RESERVE_MS: '180000'
   PROOF_POST_RESERVE_MS: '120000'
@@ -296,45 +296,35 @@ jobs:
           addon="prebuilds/$target/bare-arti.bare"
           test -f "$addon"
           addon_sha256="$(sha256sum "$addon" | awk '{print $1}')"
+          bare_bin="$(node -p "require('bare-runtime')('bare')")"
+          chmod +x "$bare_bin"
+          "$bare_bin" -e "const b=require('./binding');if(b.abiVersion!==2||b.capabilities!=='reachableAddresses')throw new Error('unexpected bare-arti addon ABI')"
           compiler_file="$(find "$release_build/CMakeFiles" -mindepth 2 -maxdepth 2 -name CMakeCCompiler.cmake -print -quit)"
           test -f "$compiler_file"
           actual_c_compiler="$(sed -n 's/^set(CMAKE_C_COMPILER "\([^"]*\)")$/\1/p' "$compiler_file")"
           test -x "$actual_c_compiler"
-          jq -n \
-            --arg sourceSha "$BARE_ARTI_SHA" \
-            --arg sourceRepository 'https://github.com/ayooooo123/bare-arti' \
-            --arg dhtRelayTorSha "$GITHUB_SHA" \
-            --arg runId "$GITHUB_RUN_ID" \
-            --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
-            --arg target "$target" \
-            --arg addon "$addon" \
-            --arg sha256 "$addon_sha256" \
-            --arg nodeVersion "$(node --version)" \
-            --arg rustVersion "$(rustc --version)" \
-            --arg bareVersion "$BARE_VERSION" \
-            --arg bareMakeVersion "$BARE_MAKE_VERSION" \
-            --arg cmakeRuntimeVersion "$CMAKE_RUNTIME_VERSION" \
-            --arg cmakeBareVersion "$CMAKE_BARE_VERSION" \
-            --arg cmakeCargoVersion "$CMAKE_CARGO_VERSION" \
-            --arg cCompiler "$("$actual_c_compiler" --version | sed -n '1p')" \
-            '{sourceSha: $sourceSha, sourceRepository: $sourceRepository,
-              dhtRelayTorSha: $dhtRelayTorSha, runId: $runId, runAttempt: $runAttempt,
-              target: $target, addon: $addon, sha256: $sha256,
-              toolchain: {node: $nodeVersion, rust: $rustVersion, bare: $bareVersion,
-                bareMake: $bareMakeVersion, cmakeRuntime: $cmakeRuntimeVersion,
-                cmakeBare: $cmakeBareVersion, cmakeCargo: $cmakeCargoVersion,
-                cCompiler: $cCompiler}}' > prebuilds/provenance.json
+          mkdir artifact-metadata
+          export target addon addon_sha256
+          node -e "const f=require('fs');f.writeFileSync('artifact-metadata/'+process.env.target+'.json',JSON.stringify({schemaVersion:1,sourceSha:process.env.BARE_ARTI_SHA,target:process.env.target,kind:'addon',path:process.env.addon,sha256:process.env.addon_sha256,addonAbiVersion:2,capabilities:['reachableAddresses']})+'\n')"
 
           mkdir -p "$GITHUB_WORKSPACE/evidence" "$RUNNER_TEMP/bare-arti-package"
-          npm pack --json --pack-destination "$RUNNER_TEMP/bare-arti-package" \
+          proof_stage="$RUNNER_TEMP/bare-arti-proof-stage"
+          test ! -e "$proof_stage"
+          env -u GITHUB_SHA BARE_ARTI_SOURCE_SHA="$BARE_ARTI_SHA" \
+            node scripts/assemble-proof-package.js "$proof_stage" "$target"
+          node -e "const p=require(process.argv[1]),v=require(process.argv[2]);if(p.private!==true)throw new Error('proof package is not private');if(v.proofOnly!==true)throw new Error('proof provenance is not proofOnly')" \
+            "$proof_stage/package.json" "$proof_stage/prebuilds/provenance.json"
+          cd "$proof_stage"
+          npm pack --ignore-scripts --json --pack-destination "$RUNNER_TEMP/bare-arti-package" \
             > "$GITHUB_WORKSPACE/evidence/npm-pack.json"
+          cd "$BARE_ARTI_SOURCE"
           tarball_name="$(node -p \
             "require('$GITHUB_WORKSPACE/evidence/npm-pack.json')[0].filename")"
           tarball="$RUNNER_TEMP/bare-arti-package/$tarball_name"
           test -f "$tarball"
           cp "$tarball" "$GITHUB_WORKSPACE/evidence/"
-          cp prebuilds/provenance.json "$GITHUB_WORKSPACE/evidence/"
-          cp "$addon" "$GITHUB_WORKSPACE/evidence/bare-arti-linux-x64.bare"
+          cp "$proof_stage/prebuilds/provenance.json" "$GITHUB_WORKSPACE/evidence/"
+          cp "$proof_stage/$addon" "$GITHUB_WORKSPACE/evidence/bare-arti-linux-x64.bare"
           tarball_sha256="$(sha256sum "$GITHUB_WORKSPACE/evidence/$tarball_name" | awk '{print $1}')"
           sha256sum \
             "$GITHUB_WORKSPACE/evidence/$tarball_name" \
@@ -538,7 +528,7 @@ jobs:
           retention-days: 30
 
   attest:
-    name: Attest exact bare-arti tarball
+    name: Attest private exact-host proof tarball
     needs: embedded_proof
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -566,7 +556,7 @@ jobs:
           test -f "$tarball_name"
           printf 'path=%s\n' "$GITHUB_WORKSPACE/evidence/$tarball_name" >> "$GITHUB_OUTPUT"
 
-      - name: Attest the independently verified tarball
+      - name: Attest the independently verified private proof tarball
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: ${{ steps.subject.outputs.path }}

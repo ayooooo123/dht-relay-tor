@@ -32,9 +32,10 @@ console.log(
     arch,
     resolvedBareArti: verified.resolvedBareArti,
     sourceSha: verified.sourceSha,
-    target: provenance.target,
-    addon: provenance.addon,
-    sha256: provenance.sha256,
+    target: verified.target,
+    addon: verified.addon,
+    sha256: verified.sha256,
+    proofOnly: provenance.proofOnly === true,
     addonLoaded
   })
 )

@@ -18,11 +18,24 @@ test('Bare Arti provenance rejects a valid hash at a non-runtime artifact path',
   t.teardown(fixture.cleanup)
   const other = fixture.writeAddon('prebuilds/linux-x64/bare-arti.bare', 'other addon')
   fixture.writeManifest({
-    addon: 'prebuilds/linux-x64/bare-arti.bare',
+    path: 'prebuilds/linux-x64/bare-arti.bare',
     sha256: sha256(other)
   })
 
   t.exception(() => fixture.verify(), /addon.*prebuilds\/darwin-arm64\/bare-arti\.bare/i)
+})
+
+test('Bare Arti provenance requires ABI 2 reachableAddresses proof metadata', (t) => {
+  const fixture = provenanceFixture('darwin-arm64')
+  t.teardown(fixture.cleanup)
+  fixture.writeManifest({}, { addonAbiVersion: 1 })
+  t.exception(() => fixture.verify(), /ABI/i)
+
+  fixture.writeManifest({}, { capabilities: [] })
+  t.exception(() => fixture.verify(), /capabilit/i)
+
+  fixture.writeManifest({}, { proofOnly: false })
+  t.exception(() => fixture.verify(), /proofOnly/i)
 })
 
 test('Bare Arti provenance verifies the exact runtime artifact', (t) => {
@@ -32,7 +45,12 @@ test('Bare Arti provenance verifies the exact runtime artifact', (t) => {
 
   t.alike(fixture.verify(), {
     resolvedBareArti: fixture.resolvedBareArti,
-    sourceSha: 'a'.repeat(40)
+    sourceSha: 'a'.repeat(40),
+    target: 'darwin-arm64',
+    addon: 'prebuilds/darwin-arm64/bare-arti.bare',
+    sha256: sha256(
+      path.join(path.dirname(fixture.resolvedBareArti), 'prebuilds/darwin-arm64/bare-arti.bare')
+    )
   })
 })
 
@@ -49,13 +67,23 @@ function provenanceFixture(target) {
       fs.rmSync(root, { recursive: true, force: true })
     },
     writeAddon,
-    writeManifest(overrides = {}) {
+    writeManifest(overrides = {}, provenanceOverrides = {}) {
       const provenance = {
+        schemaVersion: 1,
         sourceSha: 'a'.repeat(40),
-        target,
-        addon: runtimeAddon,
-        sha256: sha256(runtimeFile),
-        ...overrides
+        addonAbiVersion: 2,
+        capabilities: ['reachableAddresses'],
+        artifacts: [
+          {
+            target,
+            kind: 'addon',
+            path: runtimeAddon,
+            sha256: sha256(runtimeFile),
+            ...overrides
+          }
+        ],
+        proofOnly: true,
+        ...provenanceOverrides
       }
       fs.mkdirSync(path.join(root, 'prebuilds'), { recursive: true })
       fs.writeFileSync(path.join(root, 'prebuilds', 'provenance.json'), JSON.stringify(provenance))

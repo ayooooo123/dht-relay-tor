@@ -235,6 +235,7 @@ test('Bare Tor client validates every input before network access', async (t) =>
     bootstrap: [{ host: '127.0.0.1', port: 49152 }],
     topicHex: '07'.repeat(32),
     dataDir: path.resolve('private-arti'),
+    reachableAddresses: ['*:80', '*:443'],
     deadlines: {
       artiBootstrapTimeout: 450000,
       exchangeTimeout: 60000,
@@ -250,6 +251,8 @@ test('Bare Tor client validates every input before network access', async (t) =>
     [{ ...valid, bootstrap: [{ host: '   ', port: 1 }] }, /bootstrap/i],
     [{ ...valid, topicHex: 'AA'.repeat(32) }, /topicHex/i],
     [{ ...valid, dataDir: 'relative' }, /dataDir/i],
+    [{ ...valid, reachableAddresses: ['*:443'] }, /reachableAddresses/i],
+    [{ ...valid, reachableAddresses: ['*:80', '*:443', '*:443'] }, /reachableAddresses/i],
     [{ ...valid, expectedBareArtiSha: 'main' }, /expectedBareArtiSha/i],
     [{ ...valid, deadlines: null }, /deadlines/i],
     [{ ...valid, deadlines: { ...valid.deadlines, cleanupTimeout: 0 } }, /cleanupTimeout/i]

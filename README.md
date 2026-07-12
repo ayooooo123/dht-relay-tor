@@ -198,15 +198,19 @@ exact bare-arti commit pinned in the workflow using a second SHA-pinned checkout
 A prerequisite job builds a fresh Debug addon with test hooks enabled and runs
 bare-arti's native addon suite. A read-only package job then starts from a
 different, empty build tree, builds a stripped Release addon with test hooks
-disabled, adds source and artifact provenance, packs it, and verifies its
-target, path, source SHA, and digest in both Node and Bare. A separate read-only
+disabled, and invokes bare-arti's exact-host proof assembler. That fail-closed
+path verifies the clean source SHA, ABI/capability metadata, one-addon layout,
+and source and destination hashes while retaining `private: true` and marking
+the provenance `proofOnly: true`. It packs the private proof input with lifecycle
+scripts disabled and verifies its target, path, source SHA, and digest in both
+Node and Bare. A separate read-only
 network job downloads that exact artifact, re-verifies and installs it without
 changing this repository's lockfile, then runs the real Hyperswarm exchange with
 two strictly bounded attempts.
 
 Successful embedded runs upload the packed tarball, addon, provenance, hashes,
 runtime verification records, toolchain inventory, and Tor logs. The packed
-tarball also receives a GitHub artifact attestation from a minimal downstream
+private proof tarball also receives a GitHub artifact attestation from a minimal downstream
 job with no checkout, dependency install, lifecycle script, compiler, or native
 test execution. That job independently checks the tarball digest against the
 uploaded manifest before requesting the attestation. The job summary records
@@ -224,14 +228,19 @@ build and attest each target prebuild, load it on that target runtime, and audit
 the application's network activity.
 
 To reproduce the package boundary locally, build a fresh Release `bare-arti`
-addon for the current host, generate its `prebuilds/provenance.json`, and pack
-the exact sibling checkout. Install only that tarball without saving it or
-changing this repository's lockfile, then pass the sibling commit as the
+addon for the current host, generate its exact ABI 2 artifact metadata, and run
+`scripts/assemble-proof-package.js` from a clean exact sibling checkout. Pack
+that private proof stage with `npm pack --ignore-scripts`; never use it as a
+release or npm publication artifact. Install only that tarball without saving it
+or changing this repository's lockfile, then pass the sibling commit as the
 expected provenance SHA:
 
 ```sh
+target=linux-x64 # use the current Bare host target
+BARE_ARTI_SOURCE_SHA=$(git -C ../bare-arti rev-parse HEAD) \
+  node ../bare-arti/scripts/assemble-proof-package.js /tmp/bare-arti-proof-stage "$target"
 mkdir -p /tmp/bare-arti-proof
-(cd ../bare-arti && npm pack --pack-destination /tmp/bare-arti-proof)
+(cd /tmp/bare-arti-proof-stage && npm pack --ignore-scripts --pack-destination /tmp/bare-arti-proof)
 npm install --no-save --package-lock=false /tmp/bare-arti-proof/bare-arti-0.0.1.tgz
 BARE_ARTI_SHA=$(git -C ../bare-arti rev-parse HEAD) \
 DHT_RELAY_TOR_TEST_TOR=1 \

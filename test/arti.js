@@ -96,7 +96,8 @@ test('Arti transport keeps acquisition and stream options separated', async (t) 
       dataDir: '/private/app/arti',
       backend: 'addon',
       timeout: 90000,
-      insecureFsPermissions: false
+      insecureFsPermissions: false,
+      reachableAddresses: ['*:80', '*:443']
     }
   ])
   t.alike(connected, [
@@ -113,6 +114,31 @@ test('Arti transport keeps acquisition and stream options separated', async (t) 
   t.is(releases, 1)
 })
 
+test('Arti relay reachability policy is fixed and never leaks to external stream options', async (t) => {
+  const acquired = []
+  const connected = []
+  const stream = fakeStream()
+  const transport = createArtiTransport({
+    arti: {
+      acquire(options) {
+        acquired.push(options)
+        return { port: 19411, release: async () => {} }
+      }
+    },
+    Stream: {
+      connect(options) {
+        connected.push(options)
+        return stream
+      }
+    }
+  })
+
+  await transport.connect({ onion: 'relay.onion', port: 443 })
+  t.alike(acquired, [{ reachableAddresses: ['*:80', '*:443'] }])
+  t.absent(connected[0].reachableAddresses)
+  await closeAndFlush(stream)
+})
+
 test('Arti transport omits undefined acquisition fields', async (t) => {
   let acquired
   const stream = fakeStream()
@@ -127,7 +153,7 @@ test('Arti transport omits undefined acquisition fields', async (t) => {
   })
 
   await transport.connect({ dataDir: undefined, onion: 'relay.onion' })
-  t.alike(acquired, {})
+  t.alike(acquired, { reachableAddresses: ['*:80', '*:443'] })
   await closeAndFlush(stream)
 })
 
@@ -177,7 +203,8 @@ test('Arti transport snapshots security options once', async (t) => {
     dataDir: '/private/app/arti',
     backend: 'addon',
     timeout: 5000,
-    insecureFsPermissions: false
+    insecureFsPermissions: false,
+    reachableAddresses: ['*:80', '*:443']
   })
   await closeAndFlush(stream)
 })
