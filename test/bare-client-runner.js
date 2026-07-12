@@ -222,7 +222,12 @@ test('Bare Tor client validates every input before network access', async (t) =>
     onionPort: 18080,
     bootstrap: [{ host: '127.0.0.1', port: 49152 }],
     topicHex: '07'.repeat(32),
-    dataDir: path.resolve('private-arti')
+    dataDir: path.resolve('private-arti'),
+    deadlines: {
+      artiBootstrapTimeout: 450000,
+      exchangeTimeout: 60000,
+      cleanupTimeout: 20000
+    }
   }
   const cases = [
     ['not-json', /valid JSON/i],
@@ -233,7 +238,9 @@ test('Bare Tor client validates every input before network access', async (t) =>
     [{ ...valid, bootstrap: [{ host: '   ', port: 1 }] }, /bootstrap/i],
     [{ ...valid, topicHex: 'AA'.repeat(32) }, /topicHex/i],
     [{ ...valid, dataDir: 'relative' }, /dataDir/i],
-    [{ ...valid, expectedBareArtiSha: 'main' }, /expectedBareArtiSha/i]
+    [{ ...valid, expectedBareArtiSha: 'main' }, /expectedBareArtiSha/i],
+    [{ ...valid, deadlines: null }, /deadlines/i],
+    [{ ...valid, deadlines: { ...valid.deadlines, cleanupTimeout: 0 } }, /cleanupTimeout/i]
   ]
 
   for (const [input, expected] of cases) {

@@ -1,6 +1,7 @@
 const test = require('brittle')
 const fs = require('fs')
 const path = require('path')
+const deadlines = require('./lib/tor-deadlines')
 
 // Keep this at the already-registered workflow path so feature refs can be
 // dispatched before the hardened definition reaches the default branch.
@@ -36,20 +37,78 @@ test('Tor proof workflow separates the control and embedded proof', (t) => {
     /permissions:\n  contents: read\n\nenv:/.test(workflow),
     'workflow defaults to read-only contents'
   )
+  const buildJob = jobBlock(workflow, 'embedded_arti')
+  const attestJob = jobBlock(workflow, 'attest')
+  t.ok(/permissions:\n      contents: read\n/.test(buildJob))
+  t.absent(/id-token: write|attestations: write/.test(buildJob))
   t.ok(
-    /  embedded_arti:\n(?:.|\n)*?    permissions:\n      contents: read\n      id-token: write\n      attestations: write\n/.test(
-      workflow
-    ),
-    'only the attesting job receives OIDC and attestation writes'
+    /permissions:\n      contents: read\n      id-token: write\n      attestations: write\n/.test(
+      attestJob
+    )
   )
+  t.absent(/actions\/checkout@|npm ci|npm install|bare-make|cargo|rustc/.test(attestJob))
+  t.ok(/actions\/download-artifact@[0-9a-f]{40}/.test(attestJob))
+  t.ok(/sha256sum --check attestation-manifest\.txt/.test(attestJob))
+  t.ok(/actions\/attest-build-provenance@[0-9a-f]{40}/.test(attestJob))
   t.is((workflow.match(/^  (system_tor|embedded_arti):\s*$/gm) || []).length, 2)
-  t.is((workflow.match(/^\s*timeout-minutes:\s*30\s*$/gm) || []).length, 2)
-  t.is((workflow.match(/^\s*runs-on:\s*ubuntu-24\.04\s*$/gm) || []).length, 3)
+  t.is((workflow.match(/^\s*timeout-minutes:\s*30\s*$/gm) || []).length, 3)
+  t.is((workflow.match(/^\s*runs-on:\s*ubuntu-24\.04\s*$/gm) || []).length, 5)
   t.is((workflow.match(/^\s*timeout-minutes:\s*20\s*$/gm) || []).length, 1)
+  t.is((workflow.match(/^\s*timeout-minutes:\s*10\s*$/gm) || []).length, 1)
   t.ok(/embedded_arti:\n(?:.|\n)*?needs:\s*debug_addon/.test(workflow))
   t.ok(/DHT_RELAY_TOR_TEST_BACKEND:\s*tor/.test(workflow))
   t.ok(/DHT_RELAY_TOR_TEST_BACKEND:\s*arti/.test(workflow))
   t.ok(/npm ci/.test(workflow))
+})
+
+test('Tor proof workflow strictly bounds two attempts and post-failure evidence time', (t) => {
+  const workflow = fs.readFileSync(workflowPath, 'utf8')
+  const values = Object.fromEntries(
+    [...workflow.matchAll(/^  ([A-Z_]+_MS): '?([0-9]+)'?$/gm)].map((match) => [
+      match[1],
+      Number(match[2])
+    ])
+  )
+
+  for (const attempt of ['SYSTEM_ATTEMPT_TIMEOUT_MS', 'EMBEDDED_ATTEMPT_TIMEOUT_MS']) {
+    const worstCase =
+      values.PROOF_SETUP_RESERVE_MS +
+      2 * values[attempt] +
+      values.PROOF_RETRY_DELAY_MS +
+      values.PROOF_POST_RESERVE_MS
+    t.ok(worstCase < values.WORKFLOW_TIMEOUT_MS, `${attempt} leaves a strict job reserve`)
+  }
+  for (const [job, attempt] of [
+    ['system_tor', 'SYSTEM_ATTEMPT_TIMEOUT_MS'],
+    ['embedded_proof', 'EMBEDDED_ATTEMPT_TIMEOUT_MS']
+  ]) {
+    const profile = deadlineEnvironment(jobBlock(workflow, job))
+    profile.DHT_RELAY_TOR_OUTER_TEST_TIMEOUT = String(values[attempt])
+    profile.DHT_RELAY_TOR_WORKFLOW_CLEANUP_RESERVE = String(values.PROOF_POST_RESERVE_MS)
+    profile.DHT_RELAY_TOR_WORKFLOW_TIMEOUT = String(values.WORKFLOW_TIMEOUT_MS)
+    const configured = deadlines.loadDeadlines(profile)
+    t.is(configured.OUTER_TEST_TIMEOUT, values[attempt], `${job} uses its bounded attempt`)
+  }
+  t.ok(values.EMBEDDED_ATTEMPT_TIMEOUT_MS > 585000, 'embedded attempt exceeds observed proof')
+  t.ok(/DHT_RELAY_TOR_OUTER_TEST_TIMEOUT/.test(workflow))
+  t.ok(/DHT_RELAY_TOR_ARTI_BOOTSTRAP_TIMEOUT/.test(workflow))
+  t.is(
+    (workflow.match(/if: always\(\)/g) || []).length >= 3,
+    true,
+    'failure evidence always uploads'
+  )
+})
+
+test('Tor proof checkouts never persist the GitHub token', (t) => {
+  const workflow = fs.readFileSync(workflowPath, 'utf8')
+  const checkouts = workflow
+    .split(/\n(?=\s*- name:)/)
+    .filter((step) => /actions\/checkout@/.test(step))
+
+  t.ok(checkouts.length >= 5)
+  for (const checkout of checkouts) {
+    t.ok(/persist-credentials: false/.test(checkout))
+  }
 })
 
 test('embedded proof rebuilds, packs, and verifies the exact bare-arti checkout', (t) => {
@@ -128,3 +187,20 @@ test('README documents exact-source GitHub proof and its claim boundary', (t) =>
   t.ok(/does not establish macOS or mobile release readiness/i.test(readme))
   t.ok(/npm install --no-save --package-lock=false/i.test(readme))
 })
+
+function jobBlock(workflow, name) {
+  const start = workflow.indexOf(`  ${name}:\n`)
+  if (start === -1) return ''
+  const remainder = workflow.slice(start + name.length + 4)
+  const next = remainder.search(/\n  [a-z][a-z0-9_]*:\n/)
+  return next === -1 ? workflow.slice(start) : workflow.slice(start, start + name.length + 4 + next)
+}
+
+function deadlineEnvironment(block) {
+  return Object.fromEntries(
+    [...block.matchAll(/^\s+(DHT_RELAY_TOR_[A-Z_]+): '([0-9]+)'$/gm)].map((match) => [
+      match[1],
+      match[2]
+    ])
+  )
+}

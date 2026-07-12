@@ -147,7 +147,12 @@ test(
               bootstrap: bootstrap.map(({ host, port }) => ({ host, port })),
               topicHex: topic.toString('hex'),
               dataDir: artiDataDirectory,
-              expectedBareArtiSha
+              expectedBareArtiSha,
+              deadlines: {
+                artiBootstrapTimeout: ARTI_BOOTSTRAP_TIMEOUT,
+                exchangeTimeout: EXCHANGE_TIMEOUT,
+                cleanupTimeout: CLEANUP_TIMEOUT
+              }
             })
           ],
           timeout: ARTI_CHILD_TIMEOUT,

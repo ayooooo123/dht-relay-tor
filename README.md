@@ -196,16 +196,20 @@ The manual **Tor proof** GitHub Actions workflow is the GitHub-native,
 exact-source proof. It runs a system-Tor control and, separately, checks out the
 exact bare-arti commit pinned in the workflow using a second SHA-pinned checkout.
 A prerequisite job builds a fresh Debug addon with test hooks enabled and runs
-bare-arti's native addon suite. The embedded proof job then starts from a
+bare-arti's native addon suite. A read-only package job then starts from a
 different, empty build tree, builds a stripped Release addon with test hooks
-disabled, adds source and artifact provenance, packs it, installs that exact
-tarball without changing this repository's lockfile, and verifies its target,
-path, source SHA, and digest in both Node and Bare before the real Hyperswarm
-exchange.
+disabled, adds source and artifact provenance, packs it, and verifies its
+target, path, source SHA, and digest in both Node and Bare. A separate read-only
+network job downloads that exact artifact, re-verifies and installs it without
+changing this repository's lockfile, then runs the real Hyperswarm exchange with
+two strictly bounded attempts.
 
 Successful embedded runs upload the packed tarball, addon, provenance, hashes,
 runtime verification records, toolchain inventory, and Tor logs. The packed
-tarball also receives a GitHub artifact attestation. The job summary records
+tarball also receives a GitHub artifact attestation from a minimal downstream
+job with no checkout, dependency install, lifecycle script, compiler, or native
+test execution. That job independently checks the tarball digest against the
+uploaded manifest before requesting the attestation. The job summary records
 both repository SHAs, the run ID and attempt, both artifact hashes, and the
 effective Node, npm, Bare, Rust, Cargo, CMake, compiler, and Tor versions. GitHub
 Action dependencies and language/toolchain versions are immutable or exact;

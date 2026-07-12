@@ -5,18 +5,20 @@ const crypto = require('bare-crypto')
 const Hyperswarm = require('hyperswarm')
 const RelayedDHT = require('@hyperswarm/dht-relay')
 const verifyBareArtiProvenance = require('./lib/bare-arti-provenance')
-const { ARTI_BOOTSTRAP_TIMEOUT, EXCHANGE_TIMEOUT, CLEANUP_TIMEOUT } = require('./lib/tor-deadlines')
+const { CLEANUP_TIMEOUT } = require('./lib/tor-deadlines')
 const ERROR_PREFIX = 'DHT_RELAY_TOR_ERROR '
 const RESULT_PREFIX = 'DHT_RELAY_TOR_RESULT '
 
 let clientStream = null
 let clientDHT = null
 let clientSwarm = null
+let cleanupTimeout = CLEANUP_TIMEOUT
 
 main().then(onSuccess, onFailure)
 
 async function main() {
   const input = parseInput(Bare.argv[2])
+  cleanupTimeout = input.deadlines.cleanupTimeout
   const provenance = verifyBareArti(input.expectedBareArtiSha)
 
   clientStream = await require('../arti').connect({
@@ -24,20 +26,20 @@ async function main() {
     port: input.onionPort,
     dataDir: input.dataDir,
     artiBackend: 'addon',
-    bootstrapTimeout: ARTI_BOOTSTRAP_TIMEOUT,
-    timeout: ARTI_BOOTSTRAP_TIMEOUT
+    bootstrapTimeout: input.deadlines.artiBootstrapTimeout,
+    timeout: input.deadlines.artiBootstrapTimeout
   })
   clientDHT = new RelayedDHT(clientStream)
   await clientDHT.ready()
 
   clientSwarm = new Hyperswarm({ dht: clientDHT })
-  const reply = exchange(clientSwarm, b4a.from('tor-proof'))
+  const reply = exchange(clientSwarm, b4a.from('tor-proof'), input.deadlines.exchangeTimeout)
   clientSwarm.join(b4a.from(input.topicHex, 'hex'), { client: true, server: false })
 
   const value = await reply
   const stopped = clientStream.artiStopped
   await teardown()
-  await withDeadline(stopped, CLEANUP_TIMEOUT, 'Arti cleanup')
+  await withDeadline(stopped, cleanupTimeout, 'Arti cleanup')
 
   return {
     reply: value,
@@ -57,7 +59,7 @@ async function onFailure(err) {
       await teardown()
       if (stopped) await stopped
     })(),
-    CLEANUP_TIMEOUT,
+    cleanupTimeout,
     'client teardown'
   ).catch(() => {})
   console.error(
@@ -106,6 +108,14 @@ function parseInput(argument) {
   ) {
     throw new Error('expectedBareArtiSha must be a lowercase 40-character Git SHA')
   }
+  if (!input.deadlines || typeof input.deadlines !== 'object' || Array.isArray(input.deadlines)) {
+    throw new Error('deadlines must be an object')
+  }
+  for (const name of ['artiBootstrapTimeout', 'exchangeTimeout', 'cleanupTimeout']) {
+    if (!Number.isSafeInteger(input.deadlines[name]) || input.deadlines[name] <= 0) {
+      throw new Error(`deadlines.${name} must be a positive integer number of milliseconds`)
+    }
+  }
 
   return input
 }
@@ -136,11 +146,11 @@ async function teardown() {
   if (stream) stream.destroy()
 }
 
-function exchange(swarm, message) {
+function exchange(swarm, message, exchangeTimeout) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(
       () => done(new Error('Hyperswarm exchange timed out')),
-      EXCHANGE_TIMEOUT
+      exchangeTimeout
     )
 
     const done = (err, value) => {
