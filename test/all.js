@@ -5,5 +5,6 @@ require('./arti')
 require('./bare-client-runner')
 require('./bare-arti-provenance')
 require('./tor-deadlines')
+require('./tor-proof-workflow')
 
 if (process.env.DHT_RELAY_TOR_TEST_TOR === '1') require('./tor')

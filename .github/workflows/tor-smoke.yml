@@ -1,4 +1,4 @@
-name: Tor smoke
+name: Tor proof
 
 on:
   workflow_dispatch:
@@ -6,21 +6,300 @@ on:
 permissions:
   contents: read
 
+env:
+  NODE_VERSION: '22.19.0'
+  RUST_VERSION: '1.96.1'
+  BARE_VERSION: '1.30.3'
+  BARE_MAKE_VERSION: '1.6.3'
+  CMAKE_RUNTIME_VERSION: '4.3.1'
+  BARE_ARTI_SHA: d628e48498eec43f665a21dcf0015005683150ab
+
+# This Linux workflow proves the linux-x64 addon and Tor data path. It does not
+# establish macOS publish readiness; a future darwin release proof must build
+# and attest darwin prebuilds on a pinned macOS runner/toolchain.
 jobs:
-  tor:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+  system_tor:
+    name: System Tor control
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+      - name: Check out the exact dht-relay-tor source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up exact Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: lts/*
-      - name: Install Tor
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install and inventory the control toolchain
+        shell: bash
         run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           sudo apt-get update
-          sudo apt-get install --yes tor
-      - run: npm install
-      - name: Test the relayed DHT through a real Tor v3 service
-        run: npm test
+          sudo apt-get install --yes --no-install-recommends tor
+          npm ci
+          test "$(node -p "require('./node_modules/bare-runtime/package.json').version")" = "$BARE_VERSION"
+
+          mkdir -p evidence
+          {
+            printf 'dht-relay-tor-sha=%s\n' "$(git rev-parse HEAD)"
+            printf 'runner-image=%s\n' "${ImageOS:-unknown}-${ImageVersion:-unknown}"
+            printf 'node=%s\n' "$(node --version)"
+            printf 'npm=%s\n' "$(npm --version)"
+            printf 'bare=%s\n' "$(node_modules/.bin/bare --version)"
+            printf 'tor=%s\n' "$(tor --version | sed -n '1p')"
+            dpkg-query -W -f='apt-${binary:Package}=${Version}\n' tor
+          } | tee evidence/versions.txt
+          git diff --exit-code -- package-lock.json
+
+      - name: Prove Hyperswarm over system Tor
+        shell: bash
         env:
           DHT_RELAY_TOR_TEST_TOR: '1'
+          DHT_RELAY_TOR_TEST_BACKEND: tor
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+
+          for attempt in 1 2; do
+            log="evidence/system-tor-attempt-${attempt}.log"
+            set +e
+            npm test 2>&1 | tee "$log"
+            status=${PIPESTATUS[0]}
+            set -e
+            if [[ "$status" -eq 0 ]]; then
+              printf 'successful-attempt=%s\n' "$attempt" > evidence/system-tor-result.txt
+              exit 0
+            fi
+            if grep -Eiq 'provenance|source SHA|SHA-256|addon.*(mismatch|does not match)|Cannot find module|failed to load.*addon' "$log"; then
+              echo 'not retrying an integrity or addon load failure' >&2
+              exit "$status"
+            fi
+            if [[ "$attempt" -lt 2 ]] && grep -Eiq 'onion service descriptor.*(not found|unavailable)|HSDir.*(unavailable|failed)' "$log"; then
+              echo 'retrying a recognized hidden-service descriptor publication transient' >&2
+              sleep 20
+              continue
+            fi
+            exit "$status"
+          done
+
+      - name: Upload system Tor evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: system-tor-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+  embedded_arti:
+    name: Embedded Arti proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out the exact dht-relay-tor source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up exact Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Set up exact Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # immutable action commit
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Install native prerequisites and exact dht dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential git tor
+          npm ci
+          test "$(node -p "require('./node_modules/bare-runtime/package.json').version")" = "$BARE_VERSION"
+          git diff --exit-code -- package-lock.json
+
+      - name: Check out immutable bare-arti source
+        id: bare_arti
+        shell: bash
+        run: |
+          set -euxo pipefail
+          bare_arti_source="$(mktemp -d)/bare-arti"
+          git init "$bare_arti_source"
+          git -C "$bare_arti_source" remote add origin https://github.com/ayooooo123/bare-arti.git
+          git -C "$bare_arti_source" fetch --depth=1 origin "$BARE_ARTI_SHA"
+          git -C "$bare_arti_source" checkout --detach "$BARE_ARTI_SHA"
+          test "$(git -C "$bare_arti_source" rev-parse HEAD)" = "$BARE_ARTI_SHA"
+          test -z "$(git -C "$bare_arti_source" status --short)"
+          printf 'source=%s\n' "$bare_arti_source" >> "$GITHUB_OUTPUT"
+
+      - name: Build a fresh production linux-x64 addon
+        id: package
+        shell: bash
+        env:
+          BARE_ARTI_SOURCE: ${{ steps.bare_arti.outputs.source }}
+        run: |
+          set -euxo pipefail
+          cd "$BARE_ARTI_SOURCE"
+          npm ci
+
+          test "$(node -p "require('./node_modules/bare-runtime/package.json').version")" = "$BARE_VERSION"
+          test "$(node -p "require('./node_modules/bare-make/package.json').version")" = "$BARE_MAKE_VERSION"
+          test "$(node -p "require('./node_modules/cmake-runtime/package.json').version")" = "$CMAKE_RUNTIME_VERSION"
+          test "$(rustc --version | awk '{print $2}')" = "$RUST_VERSION"
+
+          real_cargo="$(command -v cargo)"
+          export BARE_ARTI_REAL_CARGO="$real_cargo"
+          export PATH="$BARE_ARTI_SOURCE/scripts/locked-bin:$PATH"
+          export CMAKE_PROGRAM_PATH="$BARE_ARTI_SOURCE/scripts/locked-bin"
+          build_dir="$(mktemp -d)"
+          test -z "$(find "$build_dir" -mindepth 1 -print -quit)"
+
+          npx --no-install bare-make generate \
+            --no-cache \
+            --build "$build_dir" \
+            --define BARE_ARTI_TESTING:BOOL=OFF \
+            --define CMAKE_BUILD_TYPE:STRING=Release \
+            --define CMAKE_PROGRAM_PATH:PATH="$CMAKE_PROGRAM_PATH"
+          grep -Fx 'BARE_ARTI_TESTING:BOOL=OFF' "$build_dir/CMakeCache.txt"
+          grep -Fx 'CMAKE_BUILD_TYPE:STRING=Release' "$build_dir/CMakeCache.txt"
+          npx --no-install bare-make build --build "$build_dir"
+          npx --no-install bare-make install \
+            --build "$build_dir" \
+            --prefix "$BARE_ARTI_SOURCE/prebuilds" \
+            --strip
+
+          target=linux-x64
+          addon="prebuilds/$target/bare-arti.bare"
+          test -f "$addon"
+          addon_sha256="$(sha256sum "$addon" | awk '{print $1}')"
+          jq -n \
+            --arg sourceSha "$BARE_ARTI_SHA" \
+            --arg sourceRepository 'https://github.com/ayooooo123/bare-arti' \
+            --arg dhtRelayTorSha "$GITHUB_SHA" \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg target "$target" \
+            --arg addon "$addon" \
+            --arg sha256 "$addon_sha256" \
+            --arg nodeVersion "$(node --version)" \
+            --arg rustVersion "$(rustc --version)" \
+            --arg bareVersion "$BARE_VERSION" \
+            --arg bareMakeVersion "$BARE_MAKE_VERSION" \
+            --arg cmakeRuntimeVersion "$CMAKE_RUNTIME_VERSION" \
+            '{sourceSha: $sourceSha, sourceRepository: $sourceRepository,
+              dhtRelayTorSha: $dhtRelayTorSha, runId: $runId, runAttempt: $runAttempt,
+              target: $target, addon: $addon, sha256: $sha256,
+              toolchain: {node: $nodeVersion, rust: $rustVersion, bare: $bareVersion,
+                bareMake: $bareMakeVersion, cmakeRuntime: $cmakeRuntimeVersion}}' \
+            > prebuilds/provenance.json
+
+          mkdir -p "$GITHUB_WORKSPACE/evidence" "$RUNNER_TEMP/bare-arti-package"
+          npm pack --json --pack-destination "$RUNNER_TEMP/bare-arti-package" \
+            > "$GITHUB_WORKSPACE/evidence/npm-pack.json"
+          tarball_name="$(node -p \
+            "require('$GITHUB_WORKSPACE/evidence/npm-pack.json')[0].filename")"
+          tarball="$RUNNER_TEMP/bare-arti-package/$tarball_name"
+          test -f "$tarball"
+          cp "$tarball" "$GITHUB_WORKSPACE/evidence/"
+          cp prebuilds/provenance.json "$GITHUB_WORKSPACE/evidence/"
+          cp "$addon" "$GITHUB_WORKSPACE/evidence/bare-arti-linux-x64.bare"
+          sha256sum \
+            "$GITHUB_WORKSPACE/evidence/$tarball_name" \
+            "$GITHUB_WORKSPACE/evidence/bare-arti-linux-x64.bare" \
+            | tee "$GITHUB_WORKSPACE/evidence/artifact-sha256.txt"
+          printf 'tarball=%s\n' "$tarball" >> "$GITHUB_OUTPUT"
+          printf 'tarball_name=%s\n' "$tarball_name" >> "$GITHUB_OUTPUT"
+          git diff --exit-code -- package-lock.json
+
+      - name: Install and verify the exact packed artifact in Node and Bare
+        shell: bash
+        env:
+          BARE_ARTI_TARBALL: ${{ steps.package.outputs.tarball }}
+        run: |
+          set -euxo pipefail
+          lock_sha256="$(sha256sum package-lock.json | awk '{print $1}')"
+          npm install --no-save --package-lock=false "$BARE_ARTI_TARBALL"
+          test "$(sha256sum package-lock.json | awk '{print $1}')" = "$lock_sha256"
+          test "$(node -p "require('./node_modules/bare-runtime/package.json').version")" = "$BARE_VERSION"
+
+          node test/verify-installed-bare-arti.js "$BARE_ARTI_SHA" \
+            | tee evidence/node-install-verification.json
+          node_modules/.bin/bare test/verify-installed-bare-arti.js "$BARE_ARTI_SHA" \
+            | tee evidence/bare-install-verification.json
+          grep -F '"addonLoaded":true' evidence/bare-install-verification.json
+          git diff --exit-code -- package-lock.json
+
+      - name: Inventory the embedded proof toolchain
+        shell: bash
+        env:
+          BARE_ARTI_SOURCE: ${{ steps.bare_arti.outputs.source }}
+        run: |
+          set -euxo pipefail
+          {
+            printf 'dht-relay-tor-sha=%s\n' "$(git rev-parse HEAD)"
+            printf 'bare-arti-sha=%s\n' "$(git -C "$BARE_ARTI_SOURCE" rev-parse HEAD)"
+            printf 'runner-image=%s\n' "${ImageOS:-unknown}-${ImageVersion:-unknown}"
+            printf 'node=%s\n' "$(node --version)"
+            printf 'npm=%s\n' "$(npm --version)"
+            printf 'bare=%s\n' "$(node_modules/.bin/bare --version)"
+            printf 'rustc=%s\n' "$(rustc --version)"
+            printf 'cargo=%s\n' "$(cargo --version)"
+            printf 'tor=%s\n' "$(tor --version | sed -n '1p')"
+            printf 'bare-make=%s\n' "$BARE_MAKE_VERSION"
+            printf 'cmake-runtime=%s\n' "$CMAKE_RUNTIME_VERSION"
+            dpkg-query -W -f='apt-${binary:Package}=${Version}\n' build-essential git tor
+          } | tee evidence/versions.txt
+
+      - name: Prove Hyperswarm over embedded Arti
+        shell: bash
+        env:
+          DHT_RELAY_TOR_TEST_TOR: '1'
+          DHT_RELAY_TOR_TEST_BACKEND: arti
+        run: |
+          set -euo pipefail
+
+          for attempt in 1 2; do
+            log="evidence/embedded-arti-attempt-${attempt}.log"
+            set +e
+            npm test 2>&1 | tee "$log"
+            status=${PIPESTATUS[0]}
+            set -e
+            if [[ "$status" -eq 0 ]]; then
+              printf 'successful-attempt=%s\n' "$attempt" > evidence/embedded-arti-result.txt
+              exit 0
+            fi
+            if grep -Eiq 'provenance|source SHA|SHA-256|addon.*(mismatch|does not match)|Cannot find module|failed to load.*addon' "$log"; then
+              echo 'not retrying an integrity or addon load failure' >&2
+              exit "$status"
+            fi
+            if [[ "$attempt" -lt 2 ]] && grep -Eiq 'onion service descriptor.*(not found|unavailable)|HSDir.*(unavailable|failed)' "$log"; then
+              echo 'retrying a recognized hidden-service descriptor publication transient' >&2
+              sleep 20
+              continue
+            fi
+            exit "$status"
+          done
+
+      - name: Attest the exact packed bare-arti artifact
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: evidence/${{ steps.package.outputs.tarball_name }}
+
+      - name: Upload embedded Arti evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: embedded-arti-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
