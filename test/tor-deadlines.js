@@ -3,6 +3,20 @@ const { EventEmitter } = require('events')
 const { PassThrough } = require('stream')
 const runBareClient = require('./lib/bare-client-runner')
 const deadlines = require('./lib/tor-deadlines')
+const fs = require('fs')
+const path = require('path')
+
+test('real Tor harness imports every deadline passed to its Bare child', (t) => {
+  const source = fs.readFileSync(path.join(__dirname, 'tor.js'), 'utf8')
+  const marker = "} = require('./lib/tor-deadlines')"
+  const end = source.indexOf(marker)
+  const start = source.lastIndexOf('const {', end)
+  const imported = source.slice(start, end)
+
+  for (const name of ['ARTI_BOOTSTRAP_TIMEOUT', 'EXCHANGE_TIMEOUT', 'CLEANUP_TIMEOUT']) {
+    t.ok(new RegExp(`\\b${name}\\b`).test(imported), `${name} is explicitly imported`)
+  }
+})
 
 test('Tor proof deadlines accept a bounded embedded workflow profile', (t) => {
   const configured = deadlines.loadDeadlines({

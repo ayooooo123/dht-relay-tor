@@ -16,7 +16,9 @@ const resolveBareRuntime = require('./lib/resolve-bare-runtime')
 const { TERMINAL_PREFIX } = require('./lib/tor-proof-retry')
 const {
   TOR_BOOTSTRAP_TIMEOUT,
+  ARTI_BOOTSTRAP_TIMEOUT,
   EXCHANGE_TIMEOUT,
+  CLEANUP_TIMEOUT,
   PROCESS_KILL_TIMEOUT,
   ARTI_CHILD_TIMEOUT,
   OUTER_TEST_TIMEOUT
