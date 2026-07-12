@@ -121,12 +121,22 @@ test('host Tor consensus retry stays fail-closed after later bootstrap progress'
 
 test('host Tor consensus retry stays fail-closed for malformed or missing progress', (t) => {
   const timeout = 'Tor did not bootstrap and publish its v3 hostname within 120000ms'
+  const consensus = 'Bootstrapped 25% (requesting_status): Asking for networkstatus consensus'
 
   t.alike(classifyTorProofFailure(timeout), { retry: false, class: 'other-terminal' })
   t.alike(classifyTorProofFailure(`${timeout}\nBootstrapped ??? requesting_status`), {
     retry: false,
     class: 'other-terminal'
   })
+  for (const later of [
+    'Bootstrapped ??? requesting_status',
+    'Bootstrapped 90% requesting_status: Asking'
+  ]) {
+    t.alike(classifyTorProofFailure(`${timeout}\n${consensus}\n${later}`), {
+      retry: false,
+      class: 'other-terminal'
+    })
+  }
 })
 
 test('host Tor consensus retry stays fail-closed for payload and integrity failures', (t) => {

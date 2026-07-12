@@ -25,7 +25,7 @@ const DESCRIPTOR = [
 ]
 const HOST_TOR_BOOTSTRAP_TIMEOUT =
   /Tor did not bootstrap and publish its v3 hostname within [1-9][0-9]*ms/i
-const TOR_BOOTSTRAP_PROGRESS = /Bootstrapped [0-9]+% \([^)]+\): [^\r\n]+/g
+const TOR_BOOTSTRAP_PROGRESS = /Bootstrapped[^\r\n]*/g
 const HOST_TOR_CONSENSUS_PROGRESS =
   /^Bootstrapped 25% \(requesting_status\): Asking for networkstatus consensus$/i
 const TERMINAL_PREFIX = 'DHT_RELAY_TOR_TERMINAL '
