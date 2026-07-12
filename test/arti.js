@@ -119,6 +119,118 @@ test('Arti transport omits undefined acquisition fields', async (t) => {
   await closeAndFlush(stream)
 })
 
+test('Arti transport snapshots security options once', async (t) => {
+  const reads = {
+    dataDir: 0,
+    artiBackend: 0,
+    bootstrapTimeout: 0,
+    insecureFsPermissions: 0
+  }
+  const values = {
+    dataDir: '/private/app/arti',
+    artiBackend: 'addon',
+    bootstrapTimeout: 5000,
+    insecureFsPermissions: false
+  }
+  const options = { onion: 'relay.onion' }
+  for (const key of Object.keys(reads)) {
+    Object.defineProperty(options, key, {
+      enumerable: true,
+      get() {
+        reads[key]++
+        return values[key]
+      }
+    })
+  }
+  let acquired
+  const stream = fakeStream()
+  const transport = createArtiTransport({
+    arti: {
+      acquire(options) {
+        acquired = options
+        return { port: 8, release: async () => {} }
+      }
+    },
+    Stream: { connect: () => stream }
+  })
+
+  await transport.connect(options)
+  t.alike(reads, {
+    dataDir: 1,
+    artiBackend: 1,
+    bootstrapTimeout: 1,
+    insecureFsPermissions: 1
+  })
+  t.alike(acquired, {
+    dataDir: '/private/app/arti',
+    backend: 'addon',
+    timeout: 5000,
+    insecureFsPermissions: false
+  })
+  await closeAndFlush(stream)
+})
+
+test('Arti transport rolls back failed option snapshots', async (t) => {
+  const failures = [
+    {
+      error: error('ERR_GETTER', 'dataDir getter failed'),
+      options(failure) {
+        return Object.defineProperty({}, 'dataDir', {
+          enumerable: true,
+          get() {
+            throw failure
+          }
+        })
+      }
+    },
+    {
+      error: error('ERR_OWN_KEYS', 'ownKeys failed'),
+      options(failure) {
+        return new Proxy(
+          {},
+          {
+            ownKeys() {
+              throw failure
+            }
+          }
+        )
+      }
+    },
+    {
+      error: error('ERR_PROPERTY', 'property lookup failed'),
+      options(failure) {
+        return new Proxy(
+          {},
+          {
+            getOwnPropertyDescriptor() {
+              throw failure
+            }
+          }
+        )
+      }
+    }
+  ]
+
+  for (const fixture of failures) {
+    let acquisitions = 0
+    const stream = fakeStream()
+    const transport = createArtiTransport({
+      arti: {
+        acquire: () => {
+          acquisitions++
+          return { port: 9, release: async () => {} }
+        }
+      },
+      Stream: { connect: () => stream }
+    })
+
+    t.is(await rejection(transport.connect(fixture.options(fixture.error))), fixture.error)
+    t.is(acquisitions, 0)
+    t.is(await transport.connect({ onion: 'relay.onion' }), stream)
+    await closeAndFlush(stream)
+  }
+})
+
 test('Arti transport rejects owned proxy overrides before acquisition', async (t) => {
   let acquisitions = 0
   const transport = createArtiTransport({
@@ -187,6 +299,72 @@ test('Arti transport releases after connection failure', async (t) => {
 
   t.is(await rejection(transport.connect()), failure)
   t.is(releases, 1)
+})
+
+test('Arti transport rolls back failed stream listener setup', async (t) => {
+  const listenerFailure = error('ERR_LISTENER_SETUP')
+  const setupFailures = [
+    {
+      stream: {},
+      expected: TypeError
+    },
+    {
+      stream: new Proxy(
+        {},
+        {
+          get(target, key) {
+            if (key === 'once') throw listenerFailure
+            return target[key]
+          }
+        }
+      ),
+      expected: listenerFailure
+    }
+  ]
+
+  for (const fixture of setupFailures) {
+    const release = deferred()
+    let releases = 0
+    let connects = 0
+    let settled = false
+    const retryStream = fakeStream()
+    const transport = createArtiTransport({
+      arti: {
+        acquire: () => ({
+          port: 10,
+          async release() {
+            releases++
+            await release.promise
+          }
+        })
+      },
+      Stream: {
+        connect() {
+          return connects++ === 0 ? fixture.stream : retryStream
+        }
+      }
+    })
+
+    const connecting = transport.connect()
+    connecting.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+    t.is(releases, 1)
+    t.is(settled, false)
+    release.resolve()
+    const failure = await rejection(connecting)
+    if (fixture.expected === TypeError) t.ok(failure instanceof TypeError)
+    else t.is(failure, fixture.expected)
+    t.is(await transport.connect(), retryStream)
+    await closeAndFlush(retryStream)
+  }
 })
 
 test('Arti entry is lazy and caches one successful controller', async (t) => {
