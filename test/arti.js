@@ -15,6 +15,8 @@ function deferred() {
 function fakeStream() {
   const listeners = new Map()
   return {
+    destroyed: false,
+    destroys: 0,
     once(name, listener) {
       listeners.set(name, listener)
     },
@@ -22,6 +24,10 @@ function fakeStream() {
       const listener = listeners.get(name)
       listeners.delete(name)
       if (listener) listener(value)
+    },
+    destroy() {
+      this.destroyed = true
+      this.destroys++
     }
   }
 }
@@ -299,6 +305,162 @@ test('Arti transport releases after connection failure', async (t) => {
 
   t.is(await rejection(transport.connect()), failure)
   t.is(releases, 1)
+})
+
+test('Arti transport awaits cleanup after connection failure', async (t) => {
+  const failure = error('ERR_CONNECT', 'connect failed')
+  const release = deferred()
+  let settled = false
+  const transport = createArtiTransport({
+    arti: {
+      acquire: () => ({ port: 11, release: () => release.promise })
+    },
+    Stream: { connect: () => Promise.reject(failure) }
+  })
+
+  const connecting = transport.connect()
+  connecting.then(
+    () => {
+      settled = true
+    },
+    () => {
+      settled = true
+    }
+  )
+  await Promise.resolve()
+  await Promise.resolve()
+  t.is(settled, false)
+  release.resolve()
+  t.is(await rejection(connecting), failure)
+})
+
+test('Arti transport reports failed rollback without hiding connection failure', async (t) => {
+  const connectionFailure = error('ERR_CONNECT', 'connect failed')
+  const shutdownFailure = error('ERR_NATIVE_STOP', 'native stop failed')
+  const transport = createArtiTransport({
+    arti: {
+      acquire: () => ({
+        port: 12,
+        release: () => Promise.reject(shutdownFailure)
+      })
+    },
+    Stream: { connect: () => Promise.reject(connectionFailure) }
+  })
+
+  const failure = await rejection(transport.connect())
+  t.is(failure.code, 'ERR_ARTI_SHUTDOWN')
+  t.is(failure.cause, connectionFailure)
+  t.is(failure.shutdownError, shutdownFailure)
+  t.ok(failure.message.includes('native stop failed'))
+})
+
+test('Arti transport exposes one cleanup promise on a successful stream', async (t) => {
+  const release = deferred()
+  const stream = fakeStream()
+  const transport = createArtiTransport({
+    arti: {
+      acquire: () => ({ port: 13, release: () => release.promise })
+    },
+    Stream: { connect: () => stream }
+  })
+
+  const connected = await transport.connect()
+  const stopped = connected.artiStopped
+  t.ok(stopped instanceof Promise)
+  t.is(connected.artiStopped, stopped)
+  stream.emit('close')
+  t.is(connected.artiStopped, stopped)
+  release.resolve()
+  await stopped
+})
+
+test('Arti transport releases once across repeated terminal signals', async (t) => {
+  for (const signals of [
+    ['close', 'close'],
+    ['close', 'error'],
+    ['error', 'close'],
+    ['error', 'error']
+  ]) {
+    let releases = 0
+    const stream = fakeStream()
+    const transport = createArtiTransport({
+      arti: {
+        acquire: () => ({
+          port: 14,
+          release: async () => {
+            releases++
+          }
+        })
+      },
+      Stream: { connect: () => stream }
+    })
+
+    const connected = await transport.connect()
+    for (const signal of signals) stream.emit(signal, error('ERR_STREAM'))
+    await connected.artiStopped
+    t.is(releases, 1)
+    if (signals[0] === 'error') {
+      t.is(stream.destroys, 1)
+      t.is(stream.destroyed, true)
+    }
+  }
+})
+
+test('Arti transport keeps ownership until cleanup settles', async (t) => {
+  const release = deferred()
+  const streams = [fakeStream(), fakeStream()]
+  let connects = 0
+  const transport = createArtiTransport({
+    arti: {
+      acquire: () => ({ port: 15, release: () => release.promise })
+    },
+    Stream: { connect: () => streams[connects++] }
+  })
+
+  const first = await transport.connect()
+  first.emit('close')
+  let failure = await rejection(transport.connect())
+  t.is(failure.code, 'ERR_ARTI_CONFIG_CONFLICT')
+  release.resolve()
+  await first.artiStopped
+  t.is(await transport.connect(), streams[1])
+  streams[1].emit('close')
+  await streams[1].artiStopped
+})
+
+test('Arti transport observes automatic cleanup rejection', async (t) => {
+  if (typeof process === 'undefined' || typeof process.on !== 'function') {
+    t.pass('process rejection events are unavailable')
+    return
+  }
+
+  const shutdownFailure = error('ERR_NATIVE_STOP', 'native stop failed')
+  const stream = fakeStream()
+  const transport = createArtiTransport({
+    arti: {
+      acquire: () => ({
+        port: 16,
+        release: () => Promise.reject(shutdownFailure)
+      })
+    },
+    Stream: { connect: () => stream }
+  })
+  const unhandled = []
+  const onUnhandled = (reason) => unhandled.push(reason)
+  process.on('unhandledRejection', onUnhandled)
+
+  try {
+    const connected = await transport.connect()
+    const stopped = connected.artiStopped
+    stream.emit('close')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    t.alike(unhandled, [])
+    const failure = await rejection(stopped)
+    t.is(failure.code, 'ERR_ARTI_SHUTDOWN')
+    t.is(failure.shutdownError, shutdownFailure)
+  } finally {
+    process.removeListener('unhandledRejection', onUnhandled)
+  }
 })
 
 test('Arti transport rolls back failed stream listener setup', async (t) => {
