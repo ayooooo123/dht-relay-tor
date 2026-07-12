@@ -16,7 +16,7 @@ test('Tor proof workflow locks its supply-chain inputs', (t) => {
   )
 
   t.ok(/^\s*workflow_dispatch:\s*$/m.test(workflow), 'is manually dispatched')
-  t.ok(/^\s*BARE_ARTI_SHA:\s*342ebb563e406188258fbb11ff91c00aa8777488\s*$/m.test(workflow))
+  t.ok(/^\s*BARE_ARTI_SHA:\s*406914029d8c8de20e27ce7ce2dc261a1838421b\s*$/m.test(workflow))
   t.ok(/^\s*NODE_VERSION:\s*'22\.19\.0'\s*$/m.test(workflow))
   t.ok(/^\s*RUST_VERSION:\s*'1\.96\.1'\s*$/m.test(workflow))
   t.ok(/^\s*BARE_VERSION:\s*'1\.30\.3'\s*$/m.test(workflow))
