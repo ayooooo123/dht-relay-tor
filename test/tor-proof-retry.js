@@ -9,6 +9,28 @@ test('Tor proof retry accepts a descriptor-only publication transient', (t) => {
   })
 })
 
+test('Tor proof retry accepts Tor waiting for a rendezvous descriptor', (t) => {
+  t.alike(
+    classifyTorProofFailure(
+      'SOCKS5 CONNECT failed: TTL expired\nTried for 120 seconds to get a connection. Giving up. (waiting for rendezvous desc)'
+    ),
+    { retry: true, class: 'descriptor-publication-transient' }
+  )
+})
+
+test('rendezvous descriptor retry stays fail-closed for payload and integrity failures', (t) => {
+  const descriptor = 'Giving up. (waiting for rendezvous desc)'
+
+  t.alike(classifyTorProofFailure(`${descriptor}\nHyperswarm exchange timed out`), {
+    retry: false,
+    class: 'terminal-payload'
+  })
+  t.alike(classifyTorProofFailure(`${descriptor}\nbare-arti provenance SHA-256 does not match`), {
+    retry: false,
+    class: 'terminal-integrity-or-load'
+  })
+})
+
 test('Tor proof retry rejects HSDir text mixed with a payload timeout', (t) => {
   t.alike(
     classifyTorProofFailure(

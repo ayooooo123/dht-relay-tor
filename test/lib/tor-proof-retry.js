@@ -20,7 +20,8 @@ const PAYLOAD = [
 ]
 const DESCRIPTOR = [
   /onion service descriptor.*(?:not found|unavailable)/i,
-  /HSDir.*(?:unavailable|failed)/i
+  /HSDir.*(?:unavailable|failed)/i,
+  /Giving up\. \(waiting for rendezvous desc\)/i
 ]
 const TERMINAL_PREFIX = 'DHT_RELAY_TOR_TERMINAL '
 
