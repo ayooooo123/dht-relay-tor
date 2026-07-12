@@ -139,6 +139,7 @@ test('embedded proof rebuilds, packs, and verifies the exact bare-arti checkout'
   t.ok(/CMakeCCompiler\.cmake/.test(workflow))
   t.ok(/npm pack --json/.test(workflow))
   t.ok(/npm install --no-save --package-lock=false/.test(workflow))
+  t.ok(/tarball="\$\(realpath "\$\{tarballs\[0\]\}"\)"/.test(workflow))
   t.ok(/sourceSha/.test(workflow))
   t.ok(/runId/.test(workflow))
   t.ok(/runAttempt/.test(workflow))

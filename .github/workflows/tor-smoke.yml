@@ -478,7 +478,8 @@ jobs:
           mapfile -t tarballs < <(find evidence -maxdepth 1 -type f -name 'bare-arti-*.tgz' -print)
           test "${#tarballs[@]}" -eq 1
           (cd evidence && sha256sum --check attestation-manifest.txt)
-          npm install --no-save --package-lock=false "${tarballs[0]}"
+          tarball="$(realpath "${tarballs[0]}")"
+          npm install --no-save --package-lock=false "$tarball"
           node test/verify-installed-bare-arti.js "$BARE_ARTI_SHA" \
             | tee evidence/proof-node-install-verification.json
           bare_bin="$(node -p "require('bare-runtime')('bare')")"
