@@ -36,6 +36,9 @@ test('Bare Arti provenance requires ABI 2 reachableAddresses proof metadata', (t
 
   fixture.writeManifest({}, { proofOnly: false })
   t.exception(() => fixture.verify(), /proofOnly/i)
+
+  fixture.writeManifest({}, { proofOnly: undefined })
+  t.exception(() => fixture.verify(), /proofOnly/i)
 })
 
 test('Bare Arti provenance verifies the exact runtime artifact', (t) => {

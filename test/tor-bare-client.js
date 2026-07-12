@@ -44,8 +44,7 @@ async function main() {
   return {
     reply: value,
     resolvedBareArti: provenance.resolvedBareArti,
-    sourceSha: provenance.sourceSha,
-    reachableAddresses: input.reachableAddresses
+    sourceSha: provenance.sourceSha
   }
 }
 
@@ -102,14 +101,6 @@ function parseInput(argument) {
   }
   if (typeof input.dataDir !== 'string' || !path.isAbsolute(input.dataDir)) {
     throw new Error('dataDir must be an absolute path')
-  }
-  if (
-    !Array.isArray(input.reachableAddresses) ||
-    input.reachableAddresses.length !== 2 ||
-    input.reachableAddresses[0] !== '*:80' ||
-    input.reachableAddresses[1] !== '*:443'
-  ) {
-    throw new Error('reachableAddresses must be exactly ["*:80","*:443"]')
   }
   if (
     input.expectedBareArtiSha !== undefined &&

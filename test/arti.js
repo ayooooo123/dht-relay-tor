@@ -133,7 +133,11 @@ test('Arti relay reachability policy is fixed and never leaks to external stream
     }
   })
 
-  await transport.connect({ onion: 'relay.onion', port: 443 })
+  await transport.connect({
+    onion: 'relay.onion',
+    port: 443,
+    reachableAddresses: ['malicious.example:1']
+  })
   t.alike(acquired, [{ reachableAddresses: ['*:80', '*:443'] }])
   t.absent(connected[0].reachableAddresses)
   await closeAndFlush(stream)

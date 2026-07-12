@@ -27,7 +27,11 @@ module.exports = function verifyBareArtiProvenance({
   ) {
     throw new Error('bare-arti provenance capabilities must be exactly reachableAddresses')
   }
+  if (expectedSourceSha && provenance.proofOnly !== true) {
+    throw new Error('exact bare-arti proof provenance must set proofOnly true')
+  }
   if (
+    !expectedSourceSha &&
     Object.prototype.hasOwnProperty.call(provenance, 'proofOnly') &&
     provenance.proofOnly !== true
   ) {

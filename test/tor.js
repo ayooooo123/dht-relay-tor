@@ -151,7 +151,6 @@ test(
               topicHex: topic.toString('hex'),
               dataDir: artiDataDirectory,
               expectedBareArtiSha,
-              reachableAddresses: ['*:80', '*:443'],
               deadlines: {
                 artiBootstrapTimeout: ARTI_BOOTSTRAP_TIMEOUT,
                 exchangeTimeout: EXCHANGE_TIMEOUT,
@@ -181,11 +180,6 @@ test(
             'Bare child verified the bare-arti source SHA'
           )
         }
-        t.alike(
-          result.reachableAddresses,
-          ['*:80', '*:443'],
-          'Bare child used the restricted Arti relay reachability policy'
-        )
       } else {
         clientStream = await Stream.connect({
           onion,
