@@ -192,25 +192,53 @@ npm test
 This mode does not start or modify Tor; the caller owns the onion service and
 its lifecycle. `DHT_RELAY_TOR_TEST_SOCKS_PORT` defaults to `9050`.
 
-The manual **Tor smoke** GitHub Actions workflow runs the same proof on an Ubuntu
-runner with Tor installed. Normal CI does not depend on Tor reachability.
+The manual **Tor proof** GitHub Actions workflow is the GitHub-native,
+exact-source proof. It runs a system-Tor control and, separately, checks out the
+exact bare-arti commit pinned in the workflow using a second SHA-pinned checkout.
+A prerequisite job builds a fresh Debug addon with test hooks enabled and runs
+bare-arti's native addon suite. The embedded proof job then starts from a
+different, empty build tree, builds a stripped Release addon with test hooks
+disabled, adds source and artifact provenance, packs it, installs that exact
+tarball without changing this repository's lockfile, and verifies its target,
+path, source SHA, and digest in both Node and Bare before the real Hyperswarm
+exchange.
+
+Successful embedded runs upload the packed tarball, addon, provenance, hashes,
+runtime verification records, toolchain inventory, and Tor logs. The packed
+tarball also receives a GitHub artifact attestation. The job summary records
+both repository SHAs, the run ID and attempt, both artifact hashes, and the
+effective Node, npm, Bare, Rust, Cargo, CMake, compiler, and Tor versions. GitHub
+Action dependencies and language/toolchain versions are immutable or exact;
+Ubuntu package versions are recorded because the runner's apt snapshot is not
+an immutable project input. Normal CI does not depend on Tor reachability.
 
 The relay's loopback source assertion is evidence that the tested onion relay
 did not observe the client's public IP. It is not a whole-process leak audit and
-does not prove that every socket opened by an application uses Tor. It also is
-not mobile runtime proof: mobile release testing must load the produced addon
-and audit the app's network activity on each target runtime.
+does not prove that every socket opened by an application uses Tor. This Linux
+proof does not establish macOS or mobile release readiness. Release testing must
+build and attest each target prebuild, load it on that target runtime, and audit
+the application's network activity.
 
-To exercise the optional Arti client backend against the Tor-hosted onion,
-place a locally built `bare-arti` sibling (including a prebuild for the current
-host) next to this repository and make it resolvable through `NODE_PATH`:
+To reproduce the package boundary locally, build a fresh Release `bare-arti`
+addon for the current host, generate its `prebuilds/provenance.json`, and pack
+the exact sibling checkout. Install only that tarball without saving it or
+changing this repository's lockfile, then pass the sibling commit as the
+expected provenance SHA:
 
 ```sh
-NODE_PATH=.. DHT_RELAY_TOR_TEST_TOR=1 DHT_RELAY_TOR_TEST_BACKEND=arti npm test
+mkdir -p /tmp/bare-arti-proof
+(cd ../bare-arti && npm pack --pack-destination /tmp/bare-arti-proof)
+npm install --no-save --package-lock=false /tmp/bare-arti-proof/bare-arti-0.0.1.tgz
+BARE_ARTI_SHA=$(git -C ../bare-arti rev-parse HEAD) \
+DHT_RELAY_TOR_TEST_TOR=1 \
+DHT_RELAY_TOR_TEST_BACKEND=arti \
+npm test
 ```
 
-The Arti backend still needs public Tor egress. The system Tor process remains
-the onion-service host; Arti replaces only the masked client's SOCKS backend.
+The verifier fails closed if the provenance source, runtime target, addon path,
+or digest differs. The Arti backend still needs public Tor egress. The system
+Tor process remains the onion-service host; Arti replaces only the masked
+client's SOCKS backend.
 
 ## Tradeoffs (read before using)
 
