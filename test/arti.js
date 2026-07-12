@@ -20,6 +20,12 @@ function fakeStream() {
     once(name, listener) {
       listeners.set(name, listener)
     },
+    off(name, listener) {
+      if (listeners.get(name) === listener) listeners.delete(name)
+    },
+    listenerCount(name) {
+      return listeners.has(name) ? 1 : 0
+    },
     emit(name, value) {
       const listener = listeners.get(name)
       listeners.delete(name)
@@ -404,6 +410,115 @@ test('Arti transport releases once across repeated terminal signals', async (t) 
       t.is(stream.destroyed, true)
     }
   }
+})
+
+test('Arti transport detaches terminal listeners after close', async (t) => {
+  const stream = fakeStream()
+  const transport = createArtiTransport({
+    arti: {
+      acquire: () => ({ port: 17, release: async () => {} })
+    },
+    Stream: { connect: () => stream }
+  })
+
+  await transport.connect()
+  t.is(stream.listenerCount('close'), 1)
+  t.is(stream.listenerCount('error'), 1)
+  stream.emit('close')
+  await stream.artiStopped
+  t.is(stream.listenerCount('close'), 0)
+  t.is(stream.listenerCount('error'), 0)
+})
+
+test('Arti transport detaches terminal listeners after error', async (t) => {
+  const stream = fakeStream()
+  const transport = createArtiTransport({
+    arti: {
+      acquire: () => ({ port: 18, release: async () => {} })
+    },
+    Stream: { connect: () => stream }
+  })
+
+  await transport.connect()
+  stream.emit('error', error('ERR_STREAM'))
+  await stream.artiStopped
+  t.is(stream.listenerCount('close'), 0)
+  t.is(stream.listenerCount('error'), 0)
+})
+
+test('Arti transport still releases when terminal stream teardown throws', async (t) => {
+  for (const operation of ['off', 'destroy']) {
+    const failure = error(`ERR_${operation.toUpperCase()}`)
+    const stream = fakeStream()
+    let releases = 0
+    if (operation === 'off')
+      stream.off = () => {
+        throw failure
+      }
+    else
+      stream.destroy = () => {
+        throw failure
+      }
+    const transport = createArtiTransport({
+      arti: {
+        acquire: () => ({
+          port: 19,
+          release: async () => {
+            releases++
+          }
+        })
+      },
+      Stream: { connect: () => stream }
+    })
+
+    await transport.connect()
+    let surfaced
+    try {
+      stream.emit(operation === 'off' ? 'close' : 'error', error('ERR_STREAM'))
+    } catch (err) {
+      surfaced = err
+    }
+    t.is(surfaced, failure)
+    await stream.artiStopped
+    t.is(releases, 1)
+  }
+})
+
+test('Arti transport detaches a partial listener setup before rollback', async (t) => {
+  const setupFailure = error('ERR_ERROR_LISTENER')
+  const release = deferred()
+  const partial = fakeStream()
+  const once = partial.once
+  partial.once = function (name, listener) {
+    if (name === 'error') throw setupFailure
+    return once.call(this, name, listener)
+  }
+  const retry = fakeStream()
+  let connects = 0
+  let releases = 0
+  const transport = createArtiTransport({
+    arti: {
+      acquire: () => ({
+        port: 20,
+        release() {
+          releases++
+          return release.promise
+        }
+      })
+    },
+    Stream: { connect: () => (connects++ === 0 ? partial : retry) }
+  })
+
+  const connecting = transport.connect()
+  await Promise.resolve()
+  await Promise.resolve()
+  t.is(partial.listenerCount('close'), 0)
+  t.is(releases, 1)
+  release.resolve()
+  t.is(await rejection(connecting), setupFailure)
+  t.is(await transport.connect(), retry)
+  retry.emit('close')
+  await retry.artiStopped
 })
 
 test('Arti transport keeps ownership until cleanup settles', async (t) => {
