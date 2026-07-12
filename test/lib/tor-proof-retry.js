@@ -23,10 +23,11 @@ const DESCRIPTOR = [
   /HSDir.*(?:unavailable|failed)/i,
   /Giving up\. \(waiting for rendezvous desc\)/i
 ]
-const HOST_TOR_CONSENSUS_BOOTSTRAP = [
-  /Tor did not bootstrap and publish its v3 hostname within [1-9][0-9]*ms/i,
-  /Bootstrapped 25% \(requesting_status\): Asking for networkstatus consensus/i
-]
+const HOST_TOR_BOOTSTRAP_TIMEOUT =
+  /Tor did not bootstrap and publish its v3 hostname within [1-9][0-9]*ms/i
+const TOR_BOOTSTRAP_PROGRESS = /Bootstrapped [0-9]+% \([^)]+\): [^\r\n]+/g
+const HOST_TOR_CONSENSUS_PROGRESS =
+  /^Bootstrapped 25% \(requesting_status\): Asking for networkstatus consensus$/i
 const TERMINAL_PREFIX = 'DHT_RELAY_TOR_TERMINAL '
 
 module.exports = function classifyTorProofFailure(log) {
@@ -37,7 +38,7 @@ module.exports = function classifyTorProofFailure(log) {
   if (matches(DESCRIPTOR, log)) {
     return { retry: true, class: 'descriptor-publication-transient' }
   }
-  if (HOST_TOR_CONSENSUS_BOOTSTRAP.every((pattern) => pattern.test(log))) {
+  if (stalledAtHostTorConsensus(log)) {
     return { retry: true, class: 'host-tor-consensus-bootstrap-transient' }
   }
   return { retry: false, class: 'other-terminal' }
@@ -73,6 +74,13 @@ function classifyTorProofLog(log) {
 
 function matches(patterns, value) {
   return patterns.some((pattern) => pattern.test(value))
+}
+
+function stalledAtHostTorConsensus(log) {
+  if (!HOST_TOR_BOOTSTRAP_TIMEOUT.test(log)) return false
+  const progress = log.match(TOR_BOOTSTRAP_PROGRESS)
+  if (!progress || progress.length === 0) return false
+  return HOST_TOR_CONSENSUS_PROGRESS.test(progress[progress.length - 1])
 }
 
 module.exports.classifyTorProofLog = classifyTorProofLog
