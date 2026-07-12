@@ -1,5 +1,5 @@
 const fs = require('fs')
-const classifyTorProofFailure = require('./lib/tor-proof-retry')
+const { classifyTorProofLog } = require('./lib/tor-proof-retry')
 
 const filename = process.argv[2]
 if (!filename) {
@@ -7,6 +7,6 @@ if (!filename) {
   process.exit(2)
 }
 
-const classification = classifyTorProofFailure(fs.readFileSync(filename, 'utf8'))
+const classification = classifyTorProofLog(fs.readFileSync(filename, 'utf8'))
 console.log(JSON.stringify(classification))
 process.exit(classification.retry ? 0 : 1)

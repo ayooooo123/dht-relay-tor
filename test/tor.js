@@ -12,6 +12,7 @@ const RelayedDHT = require('@hyperswarm/dht-relay')
 const { relay } = require('@hyperswarm/dht-relay')
 const Stream = require('..')
 const runBareClient = require('./lib/bare-client-runner')
+const { TERMINAL_PREFIX } = require('./lib/tor-proof-retry')
 const {
   TOR_BOOTSTRAP_TIMEOUT,
   EXCHANGE_TIMEOUT,
@@ -194,6 +195,12 @@ test(
         `hidden-service relay saw only Tor on loopback (${relayRemoteAddress})`
       )
     } catch (err) {
+      console.error(
+        TERMINAL_PREFIX +
+          JSON.stringify({
+            diagnostic: terminalDiagnostic(err, torLogs)
+          })
+      )
       if (torLogs) err.message += `\n\nTor diagnostics:\n${torLogs}`
       throw err
     } finally {
@@ -201,6 +208,18 @@ test(
     }
   }
 )
+
+function terminalDiagnostic(err, torLogs) {
+  const errorText =
+    err && typeof err.stack === 'string'
+      ? err.stack
+      : err && typeof err.message === 'string'
+        ? err.message
+        : String(err)
+  const boundedError = errorText.slice(0, 16384)
+  const boundedTorLogs = torLogs ? torLogs.slice(-49152) : ''
+  return boundedTorLogs ? `${boundedError}\n\nTor diagnostics:\n${boundedTorLogs}` : boundedError
+}
 
 function freePort() {
   const server = net.createServer()

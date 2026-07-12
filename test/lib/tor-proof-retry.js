@@ -22,6 +22,7 @@ const DESCRIPTOR = [
   /onion service descriptor.*(?:not found|unavailable)/i,
   /HSDir.*(?:unavailable|failed)/i
 ]
+const TERMINAL_PREFIX = 'DHT_RELAY_TOR_TERMINAL '
 
 module.exports = function classifyTorProofFailure(log) {
   if (matches(INTEGRITY_OR_LOAD, log)) {
@@ -34,6 +35,37 @@ module.exports = function classifyTorProofFailure(log) {
   return { retry: false, class: 'other-terminal' }
 }
 
+function classifyTorProofLog(log) {
+  const records = log
+    .split(/\r?\n/)
+    .map((line) => line.trimStart())
+    .filter((line) => line.startsWith(TERMINAL_PREFIX))
+
+  if (records.length === 0) return { retry: false, class: 'terminal-record-missing' }
+  if (records.length !== 1) return { retry: false, class: 'terminal-record-duplicate' }
+
+  let record
+  try {
+    record = JSON.parse(records[0].slice(TERMINAL_PREFIX.length))
+  } catch {
+    return { retry: false, class: 'terminal-record-malformed' }
+  }
+  if (
+    !record ||
+    typeof record !== 'object' ||
+    Array.isArray(record) ||
+    typeof record.diagnostic !== 'string' ||
+    record.diagnostic.length === 0
+  ) {
+    return { retry: false, class: 'terminal-record-malformed' }
+  }
+
+  return module.exports(record.diagnostic)
+}
+
 function matches(patterns, value) {
   return patterns.some((pattern) => pattern.test(value))
 }
+
+module.exports.classifyTorProofLog = classifyTorProofLog
+module.exports.TERMINAL_PREFIX = TERMINAL_PREFIX

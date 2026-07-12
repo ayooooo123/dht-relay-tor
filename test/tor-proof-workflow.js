@@ -83,10 +83,12 @@ test('embedded proof rebuilds, packs, and verifies the exact bare-arti checkout'
 
 test('Tor retries are descriptor-specific and never classify integrity failures as transient', (t) => {
   const workflow = fs.readFileSync(workflowPath, 'utf8')
+  const torTest = fs.readFileSync(path.join(__dirname, 'tor.js'), 'utf8')
 
   t.ok(/node test\/classify-tor-proof-failure\.js/.test(workflow))
   t.ok(/descriptor-publication-transient/.test(workflow))
   t.absent(/grep -Eiq 'onion service descriptor/.test(workflow))
+  t.ok(/TERMINAL_PREFIX/.test(torTest), 'real Tor test emits the structured terminal marker')
 })
 
 test('embedded proof publishes complete human and machine-readable evidence', (t) => {
