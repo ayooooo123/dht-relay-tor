@@ -12,6 +12,7 @@ const RelayedDHT = require('@hyperswarm/dht-relay')
 const { relay } = require('@hyperswarm/dht-relay')
 const Stream = require('..')
 const runBareClient = require('./lib/bare-client-runner')
+const resolveBareRuntime = require('./lib/resolve-bare-runtime')
 const { TERMINAL_PREFIX } = require('./lib/tor-proof-retry')
 const {
   TOR_BOOTSTRAP_TIMEOUT,
@@ -138,7 +139,7 @@ test(
         await fs.promises.mkdir(artiDataDirectory, { mode: 0o700 })
         const expectedBareArtiSha = process.env.BARE_ARTI_SHA || undefined
         const result = await runBareClient({
-          command: path.join(__dirname, '..', 'node_modules', '.bin', 'bare'),
+          command: resolveBareRuntime(),
           args: [
             path.join(__dirname, 'tor-bare-client.js'),
             JSON.stringify({

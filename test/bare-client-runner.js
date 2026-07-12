@@ -5,6 +5,18 @@ const path = require('path')
 const { spawn } = require('child_process')
 const runBareClient = require('./lib/bare-client-runner')
 const runInvalidBareClient = require('./lib/invalid-bare-client-runner')
+const resolveBareRuntime = require('./lib/resolve-bare-runtime')
+
+test('Bare runtime resolver restores the native executable mode', (t) => {
+  const calls = []
+  const command = resolveBareRuntime({
+    runtime: () => '/proof/native-bare',
+    chmod: (path, mode) => calls.push([path, mode])
+  })
+
+  t.is(command, '/proof/native-bare')
+  t.alike(calls, [['/proof/native-bare', 0o755]])
+})
 
 test('Bare client runner resolves one result after normal exit', async (t) => {
   const child = fakeChild()
@@ -288,11 +300,9 @@ function delay(ms) {
 function runInvalidBareChild(argument) {
   return runInvalidBareClient({
     spawn: () =>
-      spawn(
-        path.join(__dirname, '..', 'node_modules', '.bin', 'bare'),
-        [path.join(__dirname, 'tor-bare-client.js'), argument],
-        { stdio: ['ignore', 'pipe', 'pipe'] }
-      )
+      spawn(resolveBareRuntime(), [path.join(__dirname, 'tor-bare-client.js'), argument], {
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
   })
 }
 

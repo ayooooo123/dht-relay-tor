@@ -127,6 +127,14 @@ test('embedded proof rebuilds, packs, and verifies the exact bare-arti checkout'
   t.ok(/cmake-bare\/package\.json/.test(workflow))
   t.ok(/cmake-cargo\/package\.json/.test(workflow))
   t.ok(/require\('cmake-runtime'\)\(\)/.test(workflow))
+  t.ok(
+    (workflow.match(/chmod \+x "\$locked_cmake"/g) || []).length >= 2,
+    'restores the packaged CMake executable mode in both addon builds'
+  )
+  t.ok(/require\('bare-runtime'\)\('bare'\)/.test(workflow))
+  t.ok(/chmod \+x "\$bare_bin"/.test(workflow))
+  t.ok(/bare-package=%s/.test(workflow))
+  t.ok(/bare-binary-sha256=%s/.test(workflow))
   t.ok(/CMakeCCompiler\.cmake/.test(workflow))
   t.ok(/npm pack --json/.test(workflow))
   t.ok(/npm install --no-save --package-lock=false/.test(workflow))
@@ -135,7 +143,7 @@ test('embedded proof rebuilds, packs, and verifies the exact bare-arti checkout'
   t.ok(/runAttempt/.test(workflow))
   t.ok(/sha256sum/.test(workflow))
   t.ok(/node test\/verify-installed-bare-arti\.js/.test(workflow))
-  t.ok(/node_modules\/\.bin\/bare test\/verify-installed-bare-arti\.js/.test(workflow))
+  t.ok(/"\$bare_bin" test\/verify-installed-bare-arti\.js/.test(workflow))
   t.ok(/actions\/attest-build-provenance@/.test(workflow))
   t.ok(/actions\/upload-artifact@/.test(workflow))
 })
