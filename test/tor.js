@@ -11,13 +11,18 @@ const Hyperswarm = require('hyperswarm')
 const RelayedDHT = require('@hyperswarm/dht-relay')
 const { relay } = require('@hyperswarm/dht-relay')
 const Stream = require('..')
+const runBareClient = require('./lib/bare-client-runner')
 
-const BOOTSTRAP_TIMEOUT = 600000
+const TOR_BOOTSTRAP_TIMEOUT = 600000
+const ARTI_BOOTSTRAP_TIMEOUT = 720000
+const EXCHANGE_TIMEOUT = 120000
+const CLEANUP_TIMEOUT = 30000
+const ARTI_CHILD_TIMEOUT = ARTI_BOOTSTRAP_TIMEOUT + EXCHANGE_TIMEOUT + CLEANUP_TIMEOUT
 const ONION_PORT = 18080
 
 test(
   'relayed DHT reaches a swarm peer through a real Tor v3 service',
-  { timeout: 720000 },
+  { timeout: 1500000 },
   async (t) => {
     const backend = process.env.DHT_RELAY_TOR_TEST_BACKEND || 'tor'
     const externalOnion = process.env.DHT_RELAY_TOR_TEST_ONION || null
@@ -29,6 +34,7 @@ test(
 
     const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'dht-relay-tor-'))
     const dataDirectory = path.join(root, 'data')
+    const artiDataDirectory = path.join(root, 'arti-data')
     const hiddenServiceDirectory = path.join(root, 'hidden-service')
     const socksPort = externalOnion
       ? numberFromEnvironment('DHT_RELAY_TOR_TEST_SOCKS_PORT', false, 9050)
@@ -45,6 +51,7 @@ test(
     let clientDHT = null
     let clientSwarm = null
     let clientStream = null
+    let bareClient = null
     let cleaned = false
     let relayRemoteAddress = null
 
@@ -52,6 +59,7 @@ test(
       if (cleaned) return
       cleaned = true
 
+      if (bareClient) await stopProcess(bareClient)
       if (clientSwarm) await clientSwarm.destroy().catch(() => {})
       else if (clientDHT) await clientDHT.destroy().catch(() => {})
       if (clientStream) clientStream.destroy()
@@ -125,30 +133,61 @@ test(
       }
 
       if (backend === 'arti') {
-        clientStream = await require('../arti').connect({
-          onion,
-          port: ONION_PORT,
-          timeout: BOOTSTRAP_TIMEOUT,
-          bootstrapTimeout: BOOTSTRAP_TIMEOUT
+        await fs.promises.mkdir(artiDataDirectory, { mode: 0o700 })
+        const expectedBareArtiSha = process.env.BARE_ARTI_SHA || undefined
+        const result = await runBareClient({
+          command: path.join(__dirname, '..', 'node_modules', '.bin', 'bare'),
+          args: [
+            path.join(__dirname, 'tor-bare-client.js'),
+            JSON.stringify({
+              onion,
+              onionPort: ONION_PORT,
+              bootstrap: bootstrap.map(({ host, port }) => ({ host, port })),
+              topicHex: topic.toString('hex'),
+              dataDir: artiDataDirectory,
+              expectedBareArtiSha
+            })
+          ],
+          timeout: ARTI_CHILD_TIMEOUT,
+          killAfter: CLEANUP_TIMEOUT,
+          spawn: (command, args, options) => {
+            bareClient = spawn(command, args, options)
+            return bareClient
+          },
+          spawnOptions: { stdio: ['ignore', 'pipe', 'pipe'] }
         })
+
+        t.is(result.reply, 'echo:tor-proof', 'Hyperswarm payload crossed the relayed DHT over Arti')
+        t.is(
+          result.resolvedBareArti,
+          require.resolve('bare-arti'),
+          'Bare child loaded the installed bare-arti package'
+        )
+        if (expectedBareArtiSha) {
+          t.is(
+            result.sourceSha,
+            expectedBareArtiSha,
+            'Bare child verified the bare-arti source SHA'
+          )
+        }
       } else {
         clientStream = await Stream.connect({
           onion,
           port: ONION_PORT,
           proxyHost: '127.0.0.1',
           proxyPort: socksPort,
-          timeout: BOOTSTRAP_TIMEOUT
+          timeout: TOR_BOOTSTRAP_TIMEOUT
         })
+
+        clientDHT = new RelayedDHT(clientStream)
+        await clientDHT.ready()
+
+        clientSwarm = new Hyperswarm({ dht: clientDHT })
+        const reply = exchange(clientSwarm, b4a.from('tor-proof'))
+        clientSwarm.join(topic, { client: true, server: false })
+
+        t.is(await reply, 'echo:tor-proof', 'Hyperswarm payload crossed the relayed DHT over Tor')
       }
-
-      clientDHT = new RelayedDHT(clientStream)
-      await clientDHT.ready()
-
-      clientSwarm = new Hyperswarm({ dht: clientDHT })
-      const reply = exchange(clientSwarm, b4a.from('tor-proof'))
-      clientSwarm.join(topic, { client: true, server: false })
-
-      t.is(await reply, 'echo:tor-proof', 'Hyperswarm payload crossed the relayed DHT over Tor')
       t.ok(
         isLoopback(relayRemoteAddress),
         `hidden-service relay saw only Tor on loopback (${relayRemoteAddress})`
@@ -243,10 +282,10 @@ function waitForTor(child, hostnameFile, getLogs) {
     const timeout = setTimeout(() => {
       finish(
         new Error(
-          `Tor did not bootstrap and publish its v3 hostname within ${BOOTSTRAP_TIMEOUT}ms\n${getLogs()}`
+          `Tor did not bootstrap and publish its v3 hostname within ${TOR_BOOTSTRAP_TIMEOUT}ms\n${getLogs()}`
         )
       )
-    }, BOOTSTRAP_TIMEOUT)
+    }, TOR_BOOTSTRAP_TIMEOUT)
     check()
   })
 }
@@ -255,7 +294,7 @@ function exchange(swarm, message) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error('timed out waiting for the echo peer through Tor'))
-    }, BOOTSTRAP_TIMEOUT)
+    }, EXCHANGE_TIMEOUT)
 
     const done = (err, value) => {
       clearTimeout(timeout)
@@ -283,6 +322,7 @@ function isLoopback(address) {
 }
 
 function stopProcess(child) {
+  if (!child.pid) return Promise.resolve()
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
 
   return new Promise((resolve) => {
