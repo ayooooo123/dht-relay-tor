@@ -1,5 +1,6 @@
 require('./socks5')
 require('./relay')
+require('./relay-compatible')
 require('./arti')
 require('./bare-client-runner')
 require('./bare-arti-provenance')

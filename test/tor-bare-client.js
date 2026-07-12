@@ -185,6 +185,11 @@ function assertPort(port, name) {
 }
 
 function boundedMessage(err) {
-  const message = err && typeof err.message === 'string' ? err.message : String(err)
+  const message =
+    err && typeof err.stack === 'string'
+      ? err.stack
+      : err && typeof err.message === 'string'
+        ? err.message
+        : String(err)
   return message.slice(0, 4096)
 }

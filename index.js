@@ -1,5 +1,6 @@
 const SecretStream = require('@hyperswarm/secret-stream')
 const socks5Connect = require('./lib/socks5')
+const relayCompatible = require('./lib/relay-compatible')
 
 // dht-relay's built-in TCP transport (@hyperswarm/dht-relay/tcp) is a re-export
 // of @hyperswarm/secret-stream, which supplies the framing + encryption the
@@ -36,12 +37,12 @@ module.exports.connect = async function connect(opts = {}) {
     timeout
   })
 
-  return new SecretStream(true, socket, streamOptions)
+  return relayCompatible(new SecretStream(true, socket, streamOptions))
 }
 
 // Wrap an already-connected socket in the transport Stream. isInitiator is true
 // on the relayed client, false on the relay. Used by the relay server, by tests,
 // and by callers who dial the socket themselves (e.g. a different overlay).
 module.exports.wrap = function wrap(isInitiator, socket, options) {
-  return new SecretStream(isInitiator, socket, options)
+  return relayCompatible(new SecretStream(isInitiator, socket, options))
 }

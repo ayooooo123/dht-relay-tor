@@ -242,6 +242,9 @@ test('Bare Tor client validates every input before network access', async (t) =>
     t.ok(outcome.code !== 0, `invalid input exits nonzero: ${expected}`)
     t.ok(/^DHT_RELAY_TOR_ERROR /m.test(outcome.stderr), 'error is structured and prefixed')
     t.ok(expected.test(outcome.stderr), `diagnostic identifies invalid input: ${expected}`)
+    if (input === 'not-json') {
+      t.ok(/at parseInput/.test(outcome.stderr), 'diagnostic preserves a bounded stack location')
+    }
   }
 })
 
