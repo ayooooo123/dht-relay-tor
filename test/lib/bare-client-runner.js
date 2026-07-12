@@ -37,7 +37,11 @@ module.exports = function runBareClient(options = {}) {
     child.stderr.on('data', (chunk) => {
       stderr = appendBounded('stderr', stderr, chunk)
     })
-    child.once('error', (err) => finish(err))
+    const onError = (err) => {
+      if (child.pid === undefined) finish(err)
+      else fail(err)
+    }
+    child.on('error', onError)
     child.once('close', (code, signal) => {
       if (settled) return
 
@@ -86,6 +90,7 @@ module.exports = function runBareClient(options = {}) {
       settled = true
       clearTimer(timer)
       if (killTimer !== null) clearTimer(killTimer)
+      child.off('error', onError)
       if (err) reject(err)
       else resolve(value)
     }

@@ -4,9 +4,8 @@ const path = require('bare-path')
 const crypto = require('bare-crypto')
 const Hyperswarm = require('hyperswarm')
 const RelayedDHT = require('@hyperswarm/dht-relay')
-
-const EXCHANGE_TIMEOUT = 120000
-const CLEANUP_TIMEOUT = 30000
+const verifyBareArtiProvenance = require('./lib/bare-arti-provenance')
+const { ARTI_BOOTSTRAP_TIMEOUT, EXCHANGE_TIMEOUT, CLEANUP_TIMEOUT } = require('./lib/tor-deadlines')
 const ERROR_PREFIX = 'DHT_RELAY_TOR_ERROR '
 const RESULT_PREFIX = 'DHT_RELAY_TOR_RESULT '
 
@@ -25,8 +24,8 @@ async function main() {
     port: input.onionPort,
     dataDir: input.dataDir,
     artiBackend: 'addon',
-    bootstrapTimeout: 720000,
-    timeout: 720000
+    bootstrapTimeout: ARTI_BOOTSTRAP_TIMEOUT,
+    timeout: ARTI_BOOTSTRAP_TIMEOUT
   })
   clientDHT = new RelayedDHT(clientStream)
   await clientDHT.ready()
@@ -113,38 +112,15 @@ function parseInput(argument) {
 
 function verifyBareArti(expectedSourceSha) {
   const resolvedBareArti = require.resolve('bare-arti')
-  const packageRoot = path.dirname(resolvedBareArti)
-  const provenancePath = path.join(packageRoot, 'prebuilds', 'provenance.json')
-
-  if (!fs.existsSync(provenancePath)) {
-    if (expectedSourceSha) throw new Error('installed bare-arti has no prebuild provenance')
-    return { resolvedBareArti, sourceSha: null }
-  }
-
-  const provenance = JSON.parse(fs.readFileSync(provenancePath, 'utf8'))
-  if (!/^[0-9a-f]{40}$/.test(provenance.sourceSha)) {
-    throw new Error('bare-arti provenance has an invalid source SHA')
-  }
-  if (expectedSourceSha && provenance.sourceSha !== expectedSourceSha) {
-    throw new Error('bare-arti provenance source SHA does not match the expected checkout')
-  }
-  if (typeof provenance.addon !== 'string' || !provenance.addon) {
-    throw new Error('bare-arti provenance has no addon path')
-  }
-  if (!/^[0-9a-f]{64}$/.test(provenance.sha256)) {
-    throw new Error('bare-arti provenance has an invalid addon SHA-256')
-  }
-
-  const addon = path.resolve(packageRoot, provenance.addon)
-  if (addon !== packageRoot && !addon.startsWith(packageRoot + path.sep)) {
-    throw new Error('bare-arti provenance addon path escapes the package')
-  }
-  const digest = crypto.createHash('sha256').update(fs.readFileSync(addon)).digest('hex')
-  if (digest !== provenance.sha256) {
-    throw new Error('installed bare-arti addon does not match its provenance SHA-256')
-  }
-
-  return { resolvedBareArti, sourceSha: provenance.sourceSha }
+  return verifyBareArtiProvenance({
+    resolvedBareArti,
+    expectedSourceSha,
+    platform: Bare.platform,
+    arch: Bare.arch,
+    fs,
+    path,
+    crypto
+  })
 }
 
 async function teardown() {

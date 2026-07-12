@@ -4,6 +4,7 @@ const { PassThrough } = require('stream')
 const path = require('path')
 const { spawn } = require('child_process')
 const runBareClient = require('./lib/bare-client-runner')
+const runInvalidBareClient = require('./lib/invalid-bare-client-runner')
 
 test('Bare client runner resolves one result after normal exit', async (t) => {
   const child = fakeChild()
@@ -131,13 +132,88 @@ test('Bare client runner escalates an unreaped timeout to SIGKILL', async (t) =>
 })
 
 test('Bare client runner rejects a spawn error', async (t) => {
-  const child = fakeChild()
+  const child = fakeChild({ pid: undefined })
   const result = runBareClient({ spawn: () => child, timeout: 1000 })
   const failure = new Error('spawn failed')
 
   child.emit('error', failure)
 
   t.is(await rejection(result), failure)
+})
+
+test('Bare client runner terminates and reaps after a post-spawn error', async (t) => {
+  const child = fakeChild()
+  const result = runBareClient({ spawn: () => child, timeout: 1000 })
+  const failure = new Error('child I/O failed')
+  let settled = false
+  result.catch(() => {
+    settled = true
+  })
+
+  child.emit('error', failure)
+  await Promise.resolve()
+  t.alike(child.kills, ['SIGTERM'])
+  t.is(settled, false)
+  child.emit('error', new Error('error during SIGTERM'))
+  child.close(null, 'SIGTERM')
+
+  t.is(await rejection(result), failure)
+  t.is(child.closed, true)
+})
+
+test('Bare client runner preserves timeout while reaping an error during SIGTERM', async (t) => {
+  const child = fakeChild()
+  const result = runBareClient({ spawn: () => child, timeout: 1, killAfter: 1000 })
+  let settled = false
+  result.catch(() => {
+    settled = true
+  })
+
+  await delay(10)
+  child.emit('error', new Error('termination race'))
+  await Promise.resolve()
+  t.alike(child.kills, ['SIGTERM'])
+  t.is(settled, false)
+  child.close(null, 'SIGTERM')
+
+  await t.exception(result, /timed out/i)
+})
+
+test('invalid Bare client helper escalates promptly but settles only after close', async (t) => {
+  const child = fakeChild()
+  const outcome = runInvalidBareClient({
+    spawn: () => child,
+    timeout: 1,
+    killAfter: 1
+  })
+  let settled = false
+  outcome.then(() => {
+    settled = true
+  })
+
+  await delay(10)
+  t.alike(child.kills, ['SIGTERM', 'SIGKILL'])
+  t.is(settled, false)
+  child.close(null, 'SIGKILL')
+
+  t.alike(await outcome, { code: null, signal: 'SIGKILL', stdout: '', stderr: '', timedOut: true })
+})
+
+test('invalid Bare client helper records a spawn error until close', async (t) => {
+  const child = fakeChild({ pid: undefined })
+  const outcome = runInvalidBareClient({ spawn: () => child, timeout: 1000 })
+  const failure = new Error('spawn failed')
+  let settled = false
+  outcome.catch(() => {
+    settled = true
+  })
+
+  child.emit('error', failure)
+  await Promise.resolve()
+  t.is(settled, false)
+  child.close(null, null)
+
+  t.is(await rejection(outcome), failure)
 })
 
 test('Bare Tor client validates every input before network access', async (t) => {
@@ -169,12 +245,15 @@ test('Bare Tor client validates every input before network access', async (t) =>
   }
 })
 
-function fakeChild({ closeOnKill = false } = {}) {
+function fakeChild(options = {}) {
+  const { closeOnKill = false } = options
+  const pid = Object.prototype.hasOwnProperty.call(options, 'pid') ? options.pid : 123
   const child = new EventEmitter()
   child.stdout = new PassThrough()
   child.stderr = new PassThrough()
   child.exitCode = null
   child.signalCode = null
+  child.pid = pid
   child.closed = false
   child.kills = []
   child.kill = (signal) => {
@@ -197,22 +276,13 @@ function delay(ms) {
 }
 
 function runInvalidBareChild(argument) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      path.join(__dirname, '..', 'node_modules', '.bin', 'bare'),
-      [path.join(__dirname, 'tor-bare-client.js'), argument],
-      { stdio: ['ignore', 'pipe', 'pipe'] }
-    )
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (data) => {
-      stdout = (stdout + data).slice(-65536)
-    })
-    child.stderr.on('data', (data) => {
-      stderr = (stderr + data).slice(-65536)
-    })
-    child.once('error', reject)
-    child.once('close', (code, signal) => resolve({ code, signal, stdout, stderr }))
+  return runInvalidBareClient({
+    spawn: () =>
+      spawn(
+        path.join(__dirname, '..', 'node_modules', '.bin', 'bare'),
+        [path.join(__dirname, 'tor-bare-client.js'), argument],
+        { stdio: ['ignore', 'pipe', 'pipe'] }
+      )
   })
 }
 

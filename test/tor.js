@@ -12,17 +12,18 @@ const RelayedDHT = require('@hyperswarm/dht-relay')
 const { relay } = require('@hyperswarm/dht-relay')
 const Stream = require('..')
 const runBareClient = require('./lib/bare-client-runner')
-
-const TOR_BOOTSTRAP_TIMEOUT = 600000
-const ARTI_BOOTSTRAP_TIMEOUT = 720000
-const EXCHANGE_TIMEOUT = 120000
-const CLEANUP_TIMEOUT = 30000
-const ARTI_CHILD_TIMEOUT = ARTI_BOOTSTRAP_TIMEOUT + EXCHANGE_TIMEOUT + CLEANUP_TIMEOUT
+const {
+  TOR_BOOTSTRAP_TIMEOUT,
+  EXCHANGE_TIMEOUT,
+  PROCESS_KILL_TIMEOUT,
+  ARTI_CHILD_TIMEOUT,
+  OUTER_TEST_TIMEOUT
+} = require('./lib/tor-deadlines')
 const ONION_PORT = 18080
 
 test(
   'relayed DHT reaches a swarm peer through a real Tor v3 service',
-  { timeout: 1500000 },
+  { timeout: OUTER_TEST_TIMEOUT },
   async (t) => {
     const backend = process.env.DHT_RELAY_TOR_TEST_BACKEND || 'tor'
     const externalOnion = process.env.DHT_RELAY_TOR_TEST_ONION || null
@@ -149,7 +150,7 @@ test(
             })
           ],
           timeout: ARTI_CHILD_TIMEOUT,
-          killAfter: CLEANUP_TIMEOUT,
+          killAfter: PROCESS_KILL_TIMEOUT,
           spawn: (command, args, options) => {
             bareClient = spawn(command, args, options)
             return bareClient
